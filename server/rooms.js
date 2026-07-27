@@ -446,7 +446,22 @@ class Room {
     }
     // Ranked matchmaking rooms are one-and-done; private rooms can replay.
     // Tracked so shutdown()/dispose() can clear it (else it keeps the loop alive).
-    if (!this.isPrivate) this.timers.dispose = setTimeout(() => this.dispose(), 60 * 1000);
+    if (!this.isPrivate) {
+      this.timers.dispose = setTimeout(() => this.dispose(), 60 * 1000);
+      return;
+    }
+    // A private room that stayed in "done" was unreplayable: the client only
+    // renders the lobby — and with it the Start button and the invite link —
+    // while the phase is "lobby", so the host had no way back in. start()
+    // already accepts either phase; the room just never returned to one that
+    // the UI would draw. Park it in the lobby so "Back to lobby" means it.
+    //
+    // Emitted as a second state after game:over, not instead of it: the client
+    // needs the standings to render the results panel first.
+    this.phase = "lobby";
+    this.round = 0;
+    this.answer = null;
+    this.broadcastState();
   }
 
   // Ranked 1v1 Elo for this game's mode ladder. Only applies when exactly two

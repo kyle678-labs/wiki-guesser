@@ -333,3 +333,46 @@ footer { border-top: 1px solid var(--border-light); color: var(--muted); padding
   padding: 0.05rem 0.35rem; border-radius: 3px; border: 1px dashed #a16207;
 }
 :root[data-theme="dark"] .todo { background: #78350f; color: #fde68a; border-color: #fbbf24; }
+
+/* ── Profile panel ────────────────────────────────────────────────────────────── */
+/* Wider than the auth/mode modals: this one carries a match list, and the score
+   and rating-delta columns need room to sit on one line on a phone. */
+.profile-modal { max-width: 560px; max-height: 85vh; overflow-y: auto; }
+.pill-profile { cursor: pointer; font-family: inherit; color: var(--text); }
+.pill-profile:hover { border-color: var(--progressive); background: var(--bg3); }
+
+.profile-head { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.4rem; }
+.profile-head h2 { margin: 0; }
+.profile-head .avatar { width: 40px; height: 40px; }
+.profile-head .avatar.mono { font-size: 1.1rem; }
+
+.profile-section {
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--muted); margin: 1.4rem 0 0.6rem;
+}
+.profile-section.danger { color: var(--red); }
+
+.profile-ladders { display: flex; flex-direction: column; gap: 0.5rem; }
+.profile-ladder {
+  display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 0.8rem;
+  background: var(--bg); border: 1px solid var(--border-light);
+  border-radius: 2px; padding: 0.5rem 0.7rem;
+}
+.profile-ladder-name { font-weight: 600; }
+.profile-ladder-rating { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.profile-ladder .credit { color: var(--muted); font-size: 0.8rem; }
+
+.profile-matches { display: flex; flex-direction: column; gap: 0.5rem; }
+.profile-matches .result-item { gap: 0.6rem; }
+.profile-figures { flex: 0 0 auto; text-align: right; }
+/* The W/L/D badge reuses .pts for sizing but carries its own colour. */
+.result-win { color: var(--score); }
+.result-loss { color: var(--red); }
+.result-draw { color: var(--muted); }
+
+/* Destructive action. Outlined until armed, solid once it means it. */
+button.red { color: var(--red); border-color: var(--red); }
+button.red:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.red-btn { background: var(--red); border-color: var(--red); color: #fff; }
+.red-btn:hover { background: var(--red); border-color: var(--red); color: #fff; filter: brightness(1.1); }
+.red-btn:disabled { opacity: 0.6; }

@@ -3,6 +3,7 @@
 const { RoomManager } = require("./rooms");
 const { identityFromSession } = require("./auth");
 const { SocketLimiter, DEFAULT_SOCKET_LIMITS } = require("./ratelimit");
+const config = require("./config");
 const log = require("./log");
 
 // Wire Socket.IO onto the server. `sessionMiddleware` is the same express-session
@@ -10,16 +11,50 @@ const log = require("./log");
 // `socketLimits` overrides the per-event token buckets (tests use this); the
 // remaining opts are forwarded to the RoomManager (e.g. an injected fetchMystery).
 function attachSockets(io, sessionMiddleware, opts = {}) {
-  const { socketLimits, ...roomOpts } = opts;
+  const { socketLimits, maxSocketsPerIdentity, ...roomOpts } = opts;
   const limits = socketLimits || DEFAULT_SOCKET_LIMITS;
+  const maxSockets = maxSocketsPerIdentity || config.maxSocketsPerIdentity;
   const manager = new RoomManager(io, roomOpts);
+
+  // How many live sockets each identity holds. The token buckets below are per
+  // socket, so without this an identity multiplies every budget by simply
+  // opening more connections — and Socket.IO handles its own traffic at the
+  // HTTP server, ahead of Express, so the express-rate-limit middleware never
+  // sees it. Entries are deleted as they empty, so this tracks live players.
+  const socketsPerIdentity = new Map(); // identityId -> Set<socketId>
 
   // Share the Express session with each socket handshake.
   io.engine.use(sessionMiddleware);
 
+  // Resolve the identity and enforce the connection cap during the handshake,
+  // before the socket is established. Rejecting here rather than disconnecting
+  // afterwards matters for two reasons: a socket torn down mid-emit may never
+  // deliver the explanation, and socket.io-client does NOT auto-retry a
+  // middleware rejection — whereas it retries a server-side disconnect forever,
+  // turning a refused connection into a reconnect loop.
+  //
+  // Counting here also makes the check and the increment atomic: they sit in one
+  // synchronous block, so two handshakes can't both observe the last free slot.
+  io.use((socket, next) => {
+    const user = identityFromSession(socket.request.session);
+    // Anonymous sockets can listen but not act; they're handled below.
+    if (!user) return next();
+
+    let held = socketsPerIdentity.get(user.id);
+    if (!held) socketsPerIdentity.set(user.id, (held = new Set()));
+    if (held.size >= maxSockets) {
+      log.warn("socket_identity_limit", { user: user.id, held: held.size, max: maxSockets });
+      return next(new Error("Too many open connections for this account — close a tab and try again."));
+    }
+    held.add(socket.id);
+    // Stash it so the connection handler doesn't re-read the session and
+    // re-resolve the same identity a second time.
+    socket.data.identity = user;
+    next();
+  });
+
   io.on("connection", (socket) => {
-    const session = socket.request.session;
-    const user = identityFromSession(session);
+    const user = socket.data.identity || null;
 
     // Per-socket token buckets; garbage-collected with the socket on disconnect.
     const limiter = new SocketLimiter(limits);
@@ -73,9 +108,14 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     });
 
     // ── Private rooms ─────────────────────────────────────────────────────────
+    // Entering a room by any route means you are no longer looking for a match.
+    // Leaving a stale queue entry behind let a pending casual bot-fill fire
+    // afterwards and relocate the identity into a bot room — silently pulling
+    // the player out of the room they had just created or joined.
     limited("room:create", (settings = {}) => {
       const u = requireUser();
       if (!u) return;
+      manager.dequeue(u.id);
       if (manager.roomOf(u.id)) manager.roomOf(u.id).markDisconnected(u.id);
       const room = manager.createPrivate(u, socket, settings);
       socket.emit("room:joined", { code: room.code });
@@ -88,6 +128,7 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       if (!room) return socket.emit("room:error", { message: "No room with that code." });
       const res = room.addPlayer(u, socket);
       if (res.error) return socket.emit("room:error", { message: res.error });
+      manager.dequeue(u.id);
       socket.emit("room:joined", { code: room.code });
     });
 
@@ -138,6 +179,16 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     });
 
     socket.on("disconnect", () => {
+      // Release the connection slot off the handshake identity, which is set
+      // even for sockets that never went on to do anything.
+      const identity = socket.data.identity;
+      if (identity) {
+        const held = socketsPerIdentity.get(identity.id);
+        if (held) {
+          held.delete(socket.id);
+          if (held.size === 0) socketsPerIdentity.delete(identity.id);
+        }
+      }
       const u = socket.data.user;
       if (!u) return;
       manager.dequeue(u.id);

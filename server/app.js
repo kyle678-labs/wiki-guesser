@@ -23,13 +23,17 @@ SqliteStore.prototype.startInterval = function () {
 const config = require("./config");
 const log = require("./log");
 const metrics = require("./metrics");
-const { db, getLeaderboard } = require("./db");
+const { db, getLeaderboard, getRecentMatches, deleteAccount } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
 const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
 const { TIERS, TIER_LABELS, normalizeTier } = require("./tiers");
 const { ladderKey } = require("./ladders");
+
+// How many past games the profile panel shows. Small on purpose: it is a "how
+// have I been doing lately" view, not an archive.
+const PROFILE_MATCH_LIMIT = 10;
 
 // Google's ad tags pull scripts and frames from these; only allowed when ads are
 // actually configured, so the default CSP stays as tight as possible.
@@ -224,6 +228,52 @@ function buildServer(overrides = {}) {
     res.json({ clue, tier, leaderboard: rows });
   });
 
+  // ── Profile ─────────────────────────────────────────────────────────────────
+  // A player's own record: their ladders, and the last few ranked games. Casual
+  // and private games are never recorded, so this is genuinely everything the
+  // database holds about how they've played.
+  app.get("/api/profile", (req, res) => {
+    const user = getSessionUser(req);
+    if (!user) return res.status(401).json({ error: "Not signed in." });
+    if (!user.userId) {
+      // Guests have no stored account, which is the whole point of guest play.
+      return res.json({ user, matches: [], guest: true });
+    }
+    res.json({ user, guest: false, matches: getRecentMatches(user.userId, PROFILE_MATCH_LIMIT) });
+  });
+
+  // Self-service erasure, as promised in public/privacy.html. Irreversible and
+  // immediate: no soft-delete, no grace period, nothing retained.
+  //
+  // The explicit confirm field is a deliberate-action guard, not a security
+  // control — the session cookie is SameSite=Lax, so a cross-site POST carries
+  // no credentials and cannot reach here in the first place.
+  app.post("/api/account/delete", express.json(), (req, res, next) => {
+    const user = getSessionUser(req);
+    if (!user) return res.status(401).json({ error: "Not signed in." });
+    if (!user.userId) return res.status(400).json({ error: "Guest sessions hold no account to delete." });
+    if (!req.body || req.body.confirm !== "DELETE") {
+      return res.status(400).json({ error: "Deletion must be confirmed." });
+    }
+
+    let removed;
+    try {
+      removed = deleteAccount(user.userId);
+    } catch (err) {
+      return next(err);
+    }
+    // Deliberately logged without the display name: the point of the request was
+    // to stop holding it, and this line outlives the row by the log retention.
+    log.info("account_deleted", { userId: user.userId, matches: removed.matches, ratings: removed.ratings });
+
+    // Drop the session too. Any OTHER session still pointing at this id resolves
+    // through deserializeUser, which returns false for a missing user, so it
+    // simply stops being signed in — nothing to chase down.
+    const done = () => res.json({ ok: true, ...removed });
+    if (req.logout) return req.logout((err) => (err ? next(err) : req.session.destroy(done)));
+    req.session.destroy(done);
+  });
+
   app.use(authRouter);
 
   // ── Static site ───────────────────────────────────────────────────────────────
@@ -257,6 +307,7 @@ function buildServer(overrides = {}) {
   manager = attachSockets(io, sessionMiddleware, {
     ...(overrides.roomOptions || {}),
     socketLimits: overrides.socketLimits,
+    maxSocketsPerIdentity: overrides.maxSocketsPerIdentity,
   });
 
   return { app, server, io, manager, sessionMiddleware };

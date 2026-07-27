@@ -38,6 +38,8 @@ the code in the other to try a full multiplayer round.
 | `NODE_ENV` | `production` enables secure cookies + HSTS (serve over HTTPS). |
 | `LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`silent`. JSON logs on stdout. Default `info`. |
 | `RATE_LIMIT_AUTH` / `RATE_LIMIT_API` / `RATE_WINDOW_MS` | Per-IP HTTP rate limits. |
+| `MAX_SOCKETS_PER_IDENTITY` | Simultaneous socket connections one identity may hold (default 6). Socket rate limits are per socket, so this is what caps them per player. |
+| `INACTIVE_PURGE_MONTHS` / `INACTIVE_PURGE_INTERVAL_MS` / `INACTIVE_PURGE` | Automatic deletion of dormant accounts. Keep the months in step with `public/privacy.html`. |
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
 | `LEADERBOARD_TTL_MS` / `METRICS_INTERVAL_MS` | Leaderboard cache TTL; how often the metrics line is logged. |
@@ -79,10 +81,24 @@ and linked from the footer and the sign-in modal. They are written to match what
 the code actually does — no email is collected, chat is never persisted, one
 session cookie — so **if you change what the server stores, update them.**
 
-They contain unfilled placeholders, highlighted in amber on the rendered page and
-marked `class="todo"` in the source. Search for `todo` and fill in every one
-before launch. **Have a lawyer review both documents** — they are a solid,
-accurate starting point, not legal advice.
+Any unfilled placeholder is highlighted in amber on the rendered page and marked
+`class="todo"` in the source — search for `todo` and make sure none remain before
+launch. **Have a lawyer review both documents** — they are a solid, accurate
+starting point, not legal advice.
+
+Two commitments in the privacy policy are enforced by code rather than by good
+intentions, so keep them in step:
+
+- **Self-service deletion.** Players open their profile from the name pill and
+  delete their account outright (`POST /api/account/delete` → `deleteAccount` in
+  `server/db.js`). It erases the profile row, every ladder rating, and every
+  match, in one transaction. Match rows name both players, so deleting also
+  removes those games from the opponent's history — their rating and win/loss
+  totals live in `ratings` and are untouched.
+- **24-month inactivity.** `purgeInactiveAccounts` runs at startup and daily
+  thereafter, measured against `users.last_seen` (refreshed, at most hourly, on
+  any request that resolves the account). `INACTIVE_PURGE_MONTHS` and the number
+  on the policy page must match.
 
 ## Tests
 
@@ -104,6 +120,11 @@ Runs the suite with Node's built-in test runner (no extra framework). Coverage:
   HTTP and per-socket rate limits, JSON 404s, a thrown round returning the room to
   the lobby instead of crashing the process, graceful shutdown, and the refusal to
   boot in production without a strong `SESSION_SECRET`.
+- **`lifecycle.test.js`** — the states a room is left in between games (a private
+  room returns to its lobby and replays; a matchmaking room does not), entering a
+  room clearing the matchmaking queue, and the per-identity connection cap.
+- **`profile.test.js`** — match history read from the viewer's side of the row,
+  account deletion, and the inactivity sweep.
 
 Tests boot the real server in-process on an ephemeral port. The Wikipedia fetch
 is dependency-injected (see `buildServer({ roomOptions: { fetchMystery } })` in

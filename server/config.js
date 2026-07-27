@@ -104,6 +104,23 @@ const config = {
     api: parseInt(process.env.RATE_LIMIT_API, 10) || 300, // /api/* per window
   },
 
+  // Automatic erasure of dormant accounts. This exists to keep the retention
+  // table in public/privacy.html true: it promises accounts are deleted after
+  // 24 months of inactivity, and a promise nothing enforces is worse than no
+  // promise. Keep the months here and the number on that page in step.
+  retention: {
+    purgeEnabled: process.env.INACTIVE_PURGE !== "false",
+    inactiveMonths: parseInt(process.env.INACTIVE_PURGE_MONTHS, 10) || 24,
+    intervalMs: parseInt(process.env.INACTIVE_PURGE_INTERVAL_MS, 10) || 24 * 60 * 60 * 1000,
+  },
+
+  // A signed-in player legitimately has a tab or two open; nobody needs six.
+  // The per-event token buckets in ratelimit.js are per SOCKET, so without a cap
+  // here anyone can multiply every budget by simply opening more connections —
+  // and Socket.IO intercepts at the HTTP server, so express-rate-limit never
+  // sees that traffic.
+  maxSocketsPerIdentity: parseInt(process.env.MAX_SOCKETS_PER_IDENTITY, 10) || 6,
+
   // How long to let in-flight games finish on SIGTERM before forcing the exit.
   shutdownGraceMs: parseInt(process.env.SHUTDOWN_GRACE_MS, 10) || 10000,
 

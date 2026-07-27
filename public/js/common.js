@@ -21,6 +21,13 @@ const WG = (() => {
     socket.onAny((event, ...args) => {
       (listeners[event] || []).forEach((fn) => fn(...args));
     });
+    // connect_error is a reserved event, so onAny never sees it. The server
+    // refuses a handshake when an identity already holds too many connections;
+    // without this the tab would just sit there looking broken.
+    socket.on("connect_error", (err) => {
+      if (socket.active) return; // transient — the client is already retrying
+      toast(err.message || "Couldn't connect — please reload.");
+    });
     return socket;
   }
 
@@ -136,6 +143,156 @@ const WG = (() => {
     return `${modeLabel(clue)} · ${tierLabel(tier)}`;
   }
 
+  // ── Profile ──────────────────────────────────────────────────────────────────
+  // Short date for the match list — the year only when it isn't this one, so the
+  // common case stays compact.
+  function shortDate(ms) {
+    const d = new Date(ms);
+    const opts = { month: "short", day: "numeric" };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+    return d.toLocaleDateString(undefined, opts);
+  }
+
+  const RESULT_LABEL = { win: "W", loss: "L", draw: "D" };
+
+  function renderMatches(matches) {
+    if (!matches.length) {
+      return `<p class="hint">No ranked games yet. Casual and private games aren't recorded —
+        only ranked matches count towards a ladder.</p>`;
+    }
+    return matches
+      .map((m) => {
+        const delta = m.delta >= 0 ? `+${m.delta}` : `${m.delta}`;
+        return `<div class="result-item">
+          <div class="pts result-${m.result}">${RESULT_LABEL[m.result] || "?"}</div>
+          <div class="meta">
+            <div>vs ${avatarHtml(m.opponent, m.opponentAvatar, "sm")} ${escapeHtml(m.opponent)}</div>
+            <div class="credit">${escapeHtml(ladderLabel(m.mode))} · ${escapeHtml(shortDate(m.at))}</div>
+          </div>
+          <div class="meta profile-figures">
+            <div class="score">${m.myScore}–${m.theirScore}</div>
+            <div class="credit">
+              <span class="${m.delta >= 0 ? "delta-up" : "delta-down"}">${delta}</span>
+              <span class="muted">→ ${m.ratingAfter}</span>
+            </div>
+          </div>
+        </div>`;
+      })
+      .join("");
+  }
+
+  function renderLadders(user) {
+    const played = Object.entries((user && user.ratings) || {}).filter(([, r]) => r.gamesPlayed > 0);
+    if (!played.length) return `<p class="hint">You haven't played a ranked match yet.</p>`;
+    return `<div class="profile-ladders">${played
+      .sort((a, b) => b[1].rating - a[1].rating)
+      .map(
+        ([key, r]) => `<div class="profile-ladder">
+          <div class="profile-ladder-name">${escapeHtml(ladderLabel(key))}</div>
+          <div class="profile-ladder-rating">${r.tierIcon || "🏅"} ${r.rating}
+            <span class="muted">${escapeHtml(r.tier)}</span></div>
+          <div class="credit">${r.wins}W · ${r.losses}L · ${r.draws}D</div>
+        </div>`
+      )
+      .join("")}</div>`;
+  }
+
+  // Your record and your last games, plus the self-service erasure the privacy
+  // policy promises. Fetches fresh rather than reusing the cached /api/config
+  // identity, so ratings reflect games played since the page loaded.
+  async function showProfile() {
+    const back = document.createElement("div");
+    back.className = "modal-backdrop";
+    back.innerHTML = `<div class="card modal profile-modal"><p class="muted">Loading your profile…</p></div>`;
+    document.body.appendChild(back);
+    const close = () => back.remove();
+    back.addEventListener("click", (e) => { if (e.target === back) close(); });
+
+    let data;
+    try {
+      const res = await fetch("/api/profile", { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`profile ${res.status}`);
+      data = await res.json();
+    } catch (e) {
+      console.error("profile failed to load", e);
+      back.querySelector(".modal").innerHTML =
+        `<p class="muted">Couldn't load your profile — try again in a moment.</p>
+         <button class="ghost small" id="p-close" style="margin-top:1rem">Close</button>`;
+      back.querySelector("#p-close").addEventListener("click", close);
+      return;
+    }
+
+    const u = data.user;
+    const modal = back.querySelector(".modal");
+    modal.innerHTML = `
+      <div class="profile-head">
+        ${avatarHtml(u.name, u.avatar)}
+        <div>
+          <h2>${escapeHtml(u.name)}</h2>
+          <p class="hint">${data.guest ? "Guest — no account is stored for you." : "Signed-in account"}</p>
+        </div>
+      </div>
+      ${data.guest ? "" : `
+        <h3 class="profile-section">Your ladders</h3>
+        ${renderLadders(u)}
+        <h3 class="profile-section">Last ${data.matches.length || ""} ranked game${data.matches.length === 1 ? "" : "s"}</h3>
+        <div class="profile-matches">${renderMatches(data.matches)}</div>
+        <h3 class="profile-section danger">Delete account</h3>
+        <p class="hint">Permanently erases your profile, every ladder rating, and your match
+          history. This is immediate and cannot be undone.</p>
+        <div id="danger-zone"><button class="ghost small red" id="p-delete">Delete my account</button></div>
+      `}
+      <button class="ghost small" id="p-close" style="margin-top:1.2rem">Close</button>`;
+    modal.querySelector("#p-close").addEventListener("click", close);
+
+    // Two steps, because the first click of an irreversible thing should never
+    // be the last one. Both states render into the same slot.
+    const zone = modal.querySelector("#danger-zone");
+    if (zone) {
+      const armed = () => {
+        zone.innerHTML = `
+          <p class="hint red"><strong>Are you sure?</strong> Your rating, rank and history are gone
+            for good. Deleting also removes these matches from your opponents' histories.</p>
+          <div class="share-row">
+            <button class="ghost small" id="p-cancel">Keep my account</button>
+            <button class="small red-btn" id="p-confirm">Yes, delete everything</button>
+          </div>`;
+        zone.querySelector("#p-cancel").addEventListener("click", idle);
+        zone.querySelector("#p-confirm").addEventListener("click", doDelete);
+      };
+      const idle = () => {
+        zone.innerHTML = `<button class="ghost small red" id="p-delete">Delete my account</button>`;
+        zone.querySelector("#p-delete").addEventListener("click", armed);
+      };
+      const doDelete = async () => {
+        const btn = zone.querySelector("#p-confirm");
+        btn.disabled = true;
+        btn.textContent = "Deleting…";
+        try {
+          const res = await fetch("/api/account/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ confirm: "DELETE" }),
+          });
+          if (!res.ok) throw new Error(`delete ${res.status}`);
+        } catch (e) {
+          console.error("account deletion failed", e);
+          btn.disabled = false;
+          btn.textContent = "Yes, delete everything";
+          return toast("Couldn't delete your account — please try again.");
+        }
+        // The session is gone server-side; drop the local view of it and land
+        // the player somewhere that doesn't assume they're signed in.
+        if (config) config.user = null;
+        close();
+        toast("Your account and all its data have been deleted.");
+        setTimeout(() => (window.location = "/"), 1200);
+      };
+      idle();
+    }
+  }
+
   function renderUserPill(el) {
     const u = getUser();
     if (!u) {
@@ -162,8 +319,10 @@ const WG = (() => {
     }
     el.innerHTML = `
       ${rank}
-      <span class="pill">${avatarHtml(u.name, u.avatar, "sm")} ${escapeHtml(u.name)}</span>
+      <button class="pill pill-profile" id="pill-profile" title="Your profile, history and account settings">
+        ${avatarHtml(u.name, u.avatar, "sm")} ${escapeHtml(u.name)}</button>
       <button class="ghost small" id="pill-logout">Log out</button>`;
+    el.querySelector("#pill-profile").addEventListener("click", () => showProfile());
     el.querySelector("#pill-logout").addEventListener("click", async () => {
       await logout();
       reconnect();
@@ -309,7 +468,7 @@ const WG = (() => {
 
   return {
     loadConfig, getConfig, getUser, connect, on, emit, reconnect,
-    guestLogin, logout, showAuthModal, ensureUser, renderUserPill,
+    guestLogin, logout, showAuthModal, ensureUser, renderUserPill, showProfile,
     injectAds, toast, escapeHtml, avatarHtml, initTheme, chooseMode, modeLabel,
     chooseTier, tierLabel, ladderLabel,
   };

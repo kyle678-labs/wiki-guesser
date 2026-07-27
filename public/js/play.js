@@ -226,7 +226,13 @@
           ? enoughPlayers ? "" : "Waiting for at least one more player…"
           : "Waiting for the host to start…";
       }
-      $("frame-msg") && ($("image-frame").innerHTML = `<div class="loading">Waiting in the lobby…</div>`);
+      // Back in the lobby, whether that's a fresh room or one that just finished
+      // a game — so clear the last round's clue and timer rather than leaving
+      // the previous mystery on screen.
+      $("image-frame").classList.remove("text-mode");
+      $("image-frame").innerHTML = `<div class="loading" id="frame-msg">Waiting in the lobby…</div>`;
+      $("timer").textContent = "";
+      hide("guess-area");
     } else {
       hide("lobby-box");
     }

@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const config = require("./config");
+const log = require("./log");
 const { START_RATING } = require("./elo");
 const { LADDERS } = require("./ladders");
 
@@ -52,7 +53,28 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_ratings_mode_rating ON ratings(mode, rating DESC);
+
+  -- Both sides are queried: the profile page pulls a player's own history, and
+  -- account deletion has to find every match they appear in.
+  CREATE INDEX IF NOT EXISTS idx_matches_a ON matches(a_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_matches_b ON matches(b_user_id, created_at DESC);
 `);
+
+// ── Migrations ───────────────────────────────────────────────────────────────
+// The schema above uses CREATE TABLE IF NOT EXISTS, which does nothing to a
+// table that already exists — so anything added after the first deploy has to
+// arrive as an explicit ALTER. SQLite has no "ADD COLUMN IF NOT EXISTS".
+function hasColumn(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+
+if (!hasColumn("users", "last_seen")) {
+  db.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER");
+  // Existing rows would otherwise read as inactive-since-the-epoch and be swept
+  // up by the very first inactivity purge. Their signup date is the best
+  // evidence of activity we have retrospectively.
+  db.exec("UPDATE users SET last_seen = created_at WHERE last_seen IS NULL");
+}
 
 const stmts = {
   findUser: db.prepare("SELECT * FROM users WHERE provider = ? AND provider_id = ?"),
@@ -91,6 +113,29 @@ const stmts = {
      ORDER BY r.rating DESC, r.wins DESC
      LIMIT ?
   `),
+  touchSeen: db.prepare("UPDATE users SET last_seen = @now WHERE id = @id"),
+  // A match row stores the two players as A and B in the order the room happened
+  // to hold them, so every per-player figure has to be un-swapped against the
+  // viewer. Doing it in SQL keeps the caller from having to know that.
+  recentMatches: db.prepare(`
+    SELECT m.id, m.mode, m.created_at,
+           CASE WHEN m.a_user_id = @uid THEN m.a_score        ELSE m.b_score        END AS my_score,
+           CASE WHEN m.a_user_id = @uid THEN m.b_score        ELSE m.a_score        END AS their_score,
+           CASE WHEN m.a_user_id = @uid THEN m.a_delta        ELSE m.b_delta        END AS my_delta,
+           CASE WHEN m.a_user_id = @uid THEN m.a_rating_after ELSE m.b_rating_after END AS my_rating_after,
+           CASE WHEN m.a_user_id = @uid THEN m.outcome        ELSE 1 - m.outcome    END AS my_outcome,
+           o.display_name AS opponent_name,
+           o.avatar_url   AS opponent_avatar
+      FROM matches m
+      JOIN users o ON o.id = CASE WHEN m.a_user_id = @uid THEN m.b_user_id ELSE m.a_user_id END
+     WHERE m.a_user_id = @uid OR m.b_user_id = @uid
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT @limit
+  `),
+  deleteRatings: db.prepare("DELETE FROM ratings WHERE user_id = ?"),
+  deleteMatches: db.prepare("DELETE FROM matches WHERE a_user_id = ? OR b_user_id = ?"),
+  deleteUser: db.prepare("DELETE FROM users WHERE id = ?"),
+  findInactive: db.prepare("SELECT id, display_name, last_seen FROM users WHERE COALESCE(last_seen, created_at) < ?"),
 };
 
 // Find-or-create a user from an OAuth profile.
@@ -202,6 +247,89 @@ function recordRankedMatch(result) {
   leaderboardCache.clear();
 }
 
+// ── Activity tracking ────────────────────────────────────────────────────────
+// last_seen is what the inactivity purge measures against, so it has to be
+// touched on ordinary use — but the natural call site (resolving an identity)
+// runs on every page load and every socket connect, and a write per page view
+// is write amplification for a field whose resolution only needs to be "this
+// month". Throttle in memory: one write per user per hour, at most.
+const TOUCH_THROTTLE_MS = 60 * 60 * 1000;
+const lastTouched = new Map(); // userId -> ms
+
+function touchSeen(userId) {
+  const now = Date.now();
+  const prev = lastTouched.get(userId);
+  if (prev && now - prev < TOUCH_THROTTLE_MS) return;
+  lastTouched.set(userId, now);
+  try {
+    stmts.touchSeen.run({ id: userId, now });
+  } catch (err) {
+    // Never let bookkeeping break a sign-in or a socket handshake.
+    log.warn("touch_seen_failed", { userId, err });
+  }
+}
+
+// ── Profile ──────────────────────────────────────────────────────────────────
+// The player's own recent ranked games, newest first. Casual and private games
+// are not recorded at all, so this is the complete history that exists.
+function getRecentMatches(userId, limit = 10) {
+  return stmts.recentMatches.all({ uid: userId, limit }).map((m) => ({
+    id: m.id,
+    mode: m.mode,
+    at: m.created_at,
+    myScore: m.my_score,
+    theirScore: m.their_score,
+    delta: m.my_delta,
+    ratingAfter: m.my_rating_after,
+    result: m.my_outcome === 1 ? "win" : m.my_outcome === 0 ? "loss" : "draw",
+    opponent: m.opponent_name,
+    opponentAvatar: m.opponent_avatar,
+  }));
+}
+
+// ── Erasure ──────────────────────────────────────────────────────────────────
+// Everything we hold about one account, gone in one transaction: the profile
+// row, every ladder rating, and every match they played.
+//
+// Deleting the match rows removes them from the OPPONENT's history too. That is
+// the deliberate choice — a match row names both players, so keeping it would
+// mean retaining a deleted user's game record against their request. Nobody's
+// standing changes as a result: ratings and win/loss counters live in `ratings`
+// and are never recomputed from `matches`.
+//
+// Sessions are not touched here. deserializeUser resolves a missing user to
+// `false`, so any session still pointing at this id simply stops being signed
+// in — there is no orphaned-session state to clean up.
+const deleteAccountTx = db.transaction((userId) => {
+  // Order matters: `ratings` and `matches` both carry a foreign key onto
+  // `users`, and foreign_keys is ON.
+  const matches = stmts.deleteMatches.run(userId, userId).changes;
+  const ratings = stmts.deleteRatings.run(userId).changes;
+  const users = stmts.deleteUser.run(userId).changes;
+  return { matches, ratings, deleted: users > 0 };
+});
+
+function deleteAccount(userId) {
+  const res = deleteAccountTx(userId);
+  lastTouched.delete(userId);
+  // Their rows may have been on a ladder we're caching.
+  leaderboardCache.clear();
+  return res;
+}
+
+// Erase accounts dormant longer than `months`. Returns what it removed so the
+// caller can log it — a job that silently deletes user data is not one you want
+// running unattended.
+function purgeInactiveAccounts(months = 24) {
+  const cutoff = Date.now() - months * 30.44 * 24 * 60 * 60 * 1000;
+  const stale = stmts.findInactive.all(cutoff);
+  let matches = 0;
+  for (const u of stale) {
+    matches += deleteAccount(u.id).matches;
+  }
+  return { accounts: stale.length, matches, cutoff };
+}
+
 module.exports = {
   db,
   upsertOAuthUser,
@@ -210,4 +338,8 @@ module.exports = {
   getUserRatings,
   getLeaderboard,
   recordRankedMatch,
+  touchSeen,
+  getRecentMatches,
+  deleteAccount,
+  purgeInactiveAccounts,
 };

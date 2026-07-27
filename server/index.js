@@ -2,7 +2,7 @@
 
 const config = require("./config");
 const log = require("./log");
-const { db } = require("./db");
+const { db, purgeInactiveAccounts } = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
 const { warmPartyIndex } = require("./game/pool");
@@ -32,6 +32,32 @@ metrics.startReporting({
   intervalMs: config.metricsIntervalMs,
   sample: () => ({ rooms: manager.rooms.size, sockets: io.engine.clientsCount }),
 });
+
+// ── Retention ────────────────────────────────────────────────────────────────
+// public/privacy.html commits to deleting accounts after 24 months of
+// inactivity. This is what makes that true. It runs on boot and then daily; the
+// deletes are transactional and the sweep is idempotent, so a restart mid-sweep
+// costs nothing. Always logs its result, including zero — a job that quietly
+// deletes user data should be visible even on the days it does nothing.
+function runRetentionSweep() {
+  try {
+    const months = config.retention.inactiveMonths;
+    const res = purgeInactiveAccounts(months);
+    if (res.accounts > 0) log.warn("inactive_accounts_purged", { months, ...res });
+    else log.info("inactive_accounts_purged", { months, ...res });
+  } catch (err) {
+    log.error("retention_sweep_failed", { err });
+  }
+}
+
+if (config.retention.purgeEnabled) {
+  runRetentionSweep();
+  const retentionTimer = setInterval(runRetentionSweep, config.retention.intervalMs);
+  // Never the reason the process stays alive through a shutdown.
+  if (retentionTimer.unref) retentionTimer.unref();
+} else {
+  log.warn("retention_purge_disabled", {});
+}
 
 const shutdown = createShutdown({ server, io, manager, db, graceMs: config.shutdownGraceMs });
 

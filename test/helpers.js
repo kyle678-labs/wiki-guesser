@@ -17,9 +17,11 @@ const { io: ioClient } = require("socket.io-client");
 
 // One-off POST with keep-alive disabled — avoids the global fetch/undici
 // connection pool holding the process open after tests finish.
-function postJson(port, urlPath, body) {
+function postJson(port, urlPath, body, cookie) {
   return new Promise((resolve, reject) => {
     const data = Buffer.from(JSON.stringify(body));
+    const headers = { "Content-Type": "application/json", "Content-Length": data.length, Connection: "close" };
+    if (cookie) headers.Cookie = cookie;
     const req = http.request(
       {
         host: "localhost",
@@ -27,7 +29,7 @@ function postJson(port, urlPath, body) {
         path: urlPath,
         method: "POST",
         agent: false,
-        headers: { "Content-Type": "application/json", "Content-Length": data.length, Connection: "close" },
+        headers,
       },
       (res) => {
         const chunks = [];

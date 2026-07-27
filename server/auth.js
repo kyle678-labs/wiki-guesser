@@ -7,7 +7,7 @@ const DiscordStrategy = require("passport-discord").Strategy;
 const { customAlphabet } = require("nanoid");
 
 const config = require("./config");
-const { upsertOAuthUser, getUserById, getUserRatings } = require("./db");
+const { upsertOAuthUser, getUserById, getUserRatings, touchSeen } = require("./db");
 const { tierFor } = require("./elo");
 const { LADDERS } = require("./ladders");
 
@@ -87,6 +87,10 @@ function configurePassport() {
 }
 
 function accountIdentity(user) {
+  // Every path that resolves an account runs through here — HTTP requests and
+  // socket handshakes alike — which makes it the one place that sees the full
+  // picture of "this player is active". The write is throttled inside touchSeen.
+  touchSeen(user.id);
   const raw = getUserRatings(user.id);
   const ratings = {};
   for (const mode of LADDERS) {
