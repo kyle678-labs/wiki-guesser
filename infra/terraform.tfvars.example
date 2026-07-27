@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored —
+# it holds OAuth secrets.
+
+aws_region  = "us-east-1"
+domain_name = "wiki-guesser.example.com"
+acme_email  = "you@example.com"
+
+# Must be cloneable without credentials. For a private repo, ship a tarball to
+# the artifacts bucket and adjust user_data instead.
+app_repo_url = "https://github.com/YOURUSER/wiki-guesser.git"
+app_repo_ref = "main"
+
+# Optional — omit either pair to leave that provider disabled (guests-only play).
+# google_client_id     = "…apps.googleusercontent.com"
+# google_client_secret = "…"
+# discord_client_id     = "…"
+# discord_client_secret = "…"
+
+# Keep equal to the retention stated in public/privacy.html — these logs
+# contain IP addresses.
+log_retention_days = 30

@@ -5,8 +5,15 @@ const log = require("./log");
 const { db } = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
+const { warmPartyIndex } = require("./game/pool");
+const metrics = require("./metrics");
 
 const { server, io, manager } = buildServer();
+
+// Pull the party tier into memory before accepting traffic. Done here rather
+// than in buildServer so the test suite — which injects its own mystery source
+// and has no pool on disk — never pays for it.
+warmPartyIndex();
 
 server.listen(config.port, () => {
   const auth = [config.google.enabled && "Google", config.discord.enabled && "Discord"].filter(Boolean);
@@ -19,6 +26,11 @@ server.listen(config.port, () => {
     pool: config.mysteryDb,
     logLevel: log.level,
   });
+});
+
+metrics.startReporting({
+  intervalMs: config.metricsIntervalMs,
+  sample: () => ({ rooms: manager.rooms.size, sockets: io.engine.clientsCount }),
 });
 
 const shutdown = createShutdown({ server, io, manager, db, graceMs: config.shutdownGraceMs });

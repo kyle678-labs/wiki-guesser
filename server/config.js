@@ -107,6 +107,9 @@ const config = {
   // How long to let in-flight games finish on SIGTERM before forcing the exit.
   shutdownGraceMs: parseInt(process.env.SHUTDOWN_GRACE_MS, 10) || 10000,
 
+  // How often to emit the event-loop-lag / memory metrics line.
+  metricsIntervalMs: parseInt(process.env.METRICS_INTERVAL_MS, 10) || 60000,
+
   // Trust the first proxy hop (nginx/caddy) so secure cookies work in prod.
   trustProxy: bool(process.env.TRUST_PROXY) || process.env.NODE_ENV === "production",
 };

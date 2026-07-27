@@ -33,6 +33,11 @@ function configurePassport() {
           clientID: config.google.clientId,
           clientSecret: config.google.clientSecret,
           callbackURL: `${config.baseUrl}/auth/google/callback`,
+          // Required: passport-google-oauth20 sets no default scope, and Google
+          // rejects an authorization request without one. "profile" alone is
+          // also all we need — we deliberately don't request "email", and the
+          // privacy policy says so.
+          scope: ["profile"],
         },
         (accessToken, refreshToken, profile, done) => {
           try {

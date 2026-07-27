@@ -55,6 +55,62 @@ test("a token bucket never accrues more than its burst", () => {
   assert.equal(b.take(), false, "idle time must not bank unlimited tokens");
 });
 
+// ── Mystery pool: party-tier in-memory index ─────────────────────────────────
+test("the party index never hands back a page already used this game", () => {
+  const { pickFromIndex } = require("../server/game/pool");
+  const rows = Array.from({ length: 50 }, (_, i) => ({ page_id: i, title: `T${i}` }));
+
+  assert.equal(pickFromIndex([], new Set()), null, "an empty index yields nothing");
+  assert.equal(pickFromIndex(null, new Set()), null, "a missing index yields nothing");
+
+  // Random probing handles the normal case; drain the whole index to force the
+  // linear-scan fallback and prove it stays correct rather than looping forever.
+  const used = new Set();
+  for (let i = 0; i < 50; i++) {
+    const row = pickFromIndex(rows, used);
+    assert.ok(row, `pick ${i} should succeed while pages remain`);
+    assert.ok(!used.has(row.page_id), "never returns an already-used page");
+    used.add(row.page_id);
+  }
+  assert.equal(used.size, 50, "every page was reachable");
+  assert.equal(pickFromIndex(rows, used), null, "exhausted index reports empty rather than hanging");
+});
+
+test("warming the party index is survivable when no pool is on disk", (t) => {
+  // warmPartyIndex() runs at boot before listen(); if a missing or unreadable
+  // pool threw, the server would fail to start rather than degrading to the
+  // SQLite path.
+  const { warmPartyIndex } = require("../server/game/pool");
+  const prev = process.env.MYSTERY_DB;
+  t.after(() => {
+    if (prev === undefined) delete process.env.MYSTERY_DB;
+    else process.env.MYSTERY_DB = prev;
+  });
+
+  const config = require("../server/config");
+  const prevPath = config.mysteryDb;
+  config.mysteryDb = path.join(helpers.tempDataDir(), "does-not-exist.sqlite");
+  t.after(() => { config.mysteryDb = prevPath; });
+
+  assert.doesNotThrow(() => warmPartyIndex());
+});
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+test("the metrics snapshot reports sane event-loop numbers", () => {
+  const metrics = require("../server/metrics");
+  const snap = metrics.snapshot();
+
+  for (const key of ["loopLagP50Ms", "loopLagP99Ms", "loopLagMaxMs", "rssMb", "heapUsedMb"]) {
+    assert.equal(typeof snap[key], "number", `${key} is a number`);
+    assert.ok(Number.isFinite(snap[key]), `${key} is finite`);
+    assert.ok(snap[key] >= 0, `${key} is non-negative`);
+  }
+  // An unpopulated interval histogram reports int64 max for max/percentiles;
+  // unclamped that would surface as a ~9.2e12 ms "lag" on a healthy server.
+  assert.ok(snap.loopLagMaxMs < 60000, "lag is clamped to something believable");
+  assert.ok(snap.rssMb > 0, "rss is actually measured");
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 test("/healthz reports ok and does not set a session cookie", async () => {
   const res = await get(srv.port, "/healthz");
@@ -62,6 +118,9 @@ test("/healthz reports ok and does not set a session cookie", async () => {
   const body = JSON.parse(res.body);
   assert.equal(body.ok, true);
   assert.equal(typeof body.uptime, "number");
+  // Exposed so a monitor can watch the leading indicator without parsing logs.
+  assert.equal(typeof body.loopLagP99Ms, "number", "health check reports event-loop lag");
+  assert.equal(typeof body.rssMb, "number");
   assert.equal(res.headers["set-cookie"], undefined, "health polling must not mint sessions");
 });
 
@@ -84,6 +143,62 @@ test("the theme bootstrap is served as a real file so the CSP holds", async () =
   const res = await get(srv.port, "/js/theme.js");
   assert.equal(res.status, 200);
   assert.match(res.body, /wg-theme/);
+});
+
+// ── Legal pages ──────────────────────────────────────────────────────────────
+test("the privacy policy and terms are reachable and cross-linked", async () => {
+  for (const [path, marker] of [
+    ["/privacy", "Privacy Policy"],
+    ["/terms", "Terms of Service"],
+  ]) {
+    const res = await get(srv.port, path);
+    assert.equal(res.status, 200, `${path} must serve`);
+    assert.match(res.body, new RegExp(marker));
+    assert.match(res.body, /href="\/(privacy|terms)"/, `${path} must link to the other document`);
+  }
+});
+
+test("reading the privacy policy sets no cookie", async () => {
+  // The policy claims the only cookie is the sign-in session. Reading the policy
+  // itself must therefore not mint one, or the document contradicts the site.
+  const res = await get(srv.port, "/privacy");
+  assert.equal(res.headers["set-cookie"], undefined);
+});
+
+// ── OAuth scope ──────────────────────────────────────────────────────────────
+test("both OAuth strategies request an explicit, minimal scope", (t) => {
+  // Google rejects an authorization request with no scope, and passport-google
+  // -oauth20 supplies no default — so a missing scope silently breaks sign-in.
+  // The scopes are also exactly what the privacy policy tells users we ask for.
+  const passport = require("passport");
+  const prev = {
+    gi: process.env.GOOGLE_CLIENT_ID,
+    gs: process.env.GOOGLE_CLIENT_SECRET,
+    di: process.env.DISCORD_CLIENT_ID,
+    ds: process.env.DISCORD_CLIENT_SECRET,
+  };
+  t.after(() => {
+    for (const [k, v] of [
+      ["GOOGLE_CLIENT_ID", prev.gi], ["GOOGLE_CLIENT_SECRET", prev.gs],
+      ["DISCORD_CLIENT_ID", prev.di], ["DISCORD_CLIENT_SECRET", prev.ds],
+    ]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  process.env.GOOGLE_CLIENT_ID = "test-id";
+  process.env.GOOGLE_CLIENT_SECRET = "test-secret";
+  process.env.DISCORD_CLIENT_ID = "test-id";
+  process.env.DISCORD_CLIENT_SECRET = "test-secret";
+  // config caches env at require time, so poke the live object the same way.
+  const config = require("../server/config");
+  config.google.clientId = config.google.clientSecret = "x";
+  config.discord.clientId = config.discord.clientSecret = "x";
+  require("../server/auth").configurePassport();
+
+  assert.deepEqual(passport._strategy("google")._scope, ["profile"], "no email scope is requested");
+  assert.deepEqual(passport._strategy("discord")._scope, ["identify"]);
 });
 
 // ── HTTP rate limiting ───────────────────────────────────────────────────────

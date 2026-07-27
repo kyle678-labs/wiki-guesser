@@ -1,0 +1,313 @@
+#!/bin/bash
+# Wiki-Guesser instance bootstrap. Rendered by Terraform.
+#
+# NOTE FOR EDITORS: this file is a templatefile(). Terraform consumes $${...}
+# style interpolation, so every *bash* variable below is written as $NAME
+# without braces, which Terraform ignores. If you need braces in bash, escape
+# them as $${NAME}.
+#
+# Progress and errors land in /var/log/user-data.log:
+#     sudo tail -f /var/log/user-data.log
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+PROJECT="${project}"
+REGION="${aws_region}"
+DOMAIN="${domain_name}"
+SSM_PREFIX="${ssm_prefix}"
+BUCKET="${artifacts_bucket}"
+POOL_KEY="${mystery_pool_s3_key}"
+REPO_URL="${app_repo_url}"
+REPO_REF="${app_repo_ref}"
+LOG_GROUP="${log_group}"
+CADDY_VERSION="${caddy_version}"
+NODE_MAJOR="${node_major}"
+
+APP_DIR="/opt/$PROJECT"
+DATA_DIR="/var/lib/$PROJECT"
+LOG_DIR="/var/log/$PROJECT"
+ENV_FILE="/etc/$PROJECT.env"
+APP_USER="$PROJECT"
+
+# ── Packages ─────────────────────────────────────────────────────────────────
+dnf update -y
+# gcc-c++/make/python3 are the fallback path: better-sqlite3 ships prebuilt
+# binaries for linux-arm64, but if the ABI ever misses, node-gyp compiles it.
+dnf install -y git tar gzip jq gcc-c++ make python3 amazon-cloudwatch-agent
+
+# AL2023 carries versioned Node packages; NodeSource is the fallback.
+if ! dnf install -y "nodejs$NODE_MAJOR"; then
+  curl -fsSL "https://rpm.nodesource.com/setup_$NODE_MAJOR.x" | bash -
+  dnf install -y nodejs
+fi
+node --version
+
+# ── Data volume ──────────────────────────────────────────────────────────────
+# Attached as /dev/sdf, but Nitro presents NVMe names; AL2023's udev rules
+# create the symlink. Wait for whichever shows up first.
+DEV=""
+for _ in $(seq 1 60); do
+  for candidate in /dev/sdf /dev/xvdf; do
+    if [ -e "$candidate" ]; then DEV="$candidate"; break 2; fi
+  done
+  sleep 2
+done
+if [ -z "$DEV" ]; then
+  echo "FATAL: data volume never appeared" >&2
+  exit 1
+fi
+
+# Only format a blank volume — formatting one that already holds the player
+# database would be an unrecoverable mistake.
+if [ -z "$(blkid -o value -s TYPE "$DEV" || true)" ]; then
+  echo "No filesystem on $DEV — creating one (first boot)."
+  mkfs.ext4 -L "$PROJECT-data" "$DEV"
+else
+  echo "Existing filesystem on $DEV — mounting as-is."
+fi
+
+mkdir -p "$DATA_DIR"
+UUID="$(blkid -o value -s UUID "$DEV")"
+if ! grep -q "$UUID" /etc/fstab; then
+  # nofail so a detached volume degrades to a failed service, not an unbootable box.
+  echo "UUID=$UUID $DATA_DIR ext4 defaults,nofail 0 2" >> /etc/fstab
+fi
+mount -a
+mountpoint -q "$DATA_DIR"
+
+# ── App user ─────────────────────────────────────────────────────────────────
+id -u "$APP_USER" &>/dev/null || useradd --system --home-dir "$APP_DIR" --shell /sbin/nologin "$APP_USER"
+mkdir -p "$LOG_DIR"
+chown -R "$APP_USER:$APP_USER" "$DATA_DIR" "$LOG_DIR"
+
+# ── Mystery pool ─────────────────────────────────────────────────────────────
+# ~908 MB read-only artifact. Pulled once onto local disk; every subsequent boot
+# with the same data volume reuses it.
+if [ ! -f "$DATA_DIR/$POOL_KEY" ]; then
+  echo "Fetching mystery pool from s3://$BUCKET/$POOL_KEY"
+  aws s3 cp "s3://$BUCKET/$POOL_KEY" "$DATA_DIR/$POOL_KEY" --region "$REGION"
+  chown "$APP_USER:$APP_USER" "$DATA_DIR/$POOL_KEY"
+else
+  echo "Mystery pool already present — skipping download."
+fi
+
+# ── Application ──────────────────────────────────────────────────────────────
+if [ -d "$APP_DIR/.git" ]; then
+  git -C "$APP_DIR" fetch --depth 1 origin "$REPO_REF"
+  git -C "$APP_DIR" reset --hard FETCH_HEAD
+else
+  rm -rf "$APP_DIR"
+  git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$APP_DIR"
+fi
+cd "$APP_DIR"
+npm ci --omit=dev
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+# ── Environment ──────────────────────────────────────────────────────────────
+# Secrets stay in SSM; this file is the only place they touch disk, and only
+# root and the service account can read it.
+umask 077
+cat > "$ENV_FILE" <<EOF
+NODE_ENV=production
+PORT=3000
+BASE_URL=https://$DOMAIN
+DATA_DIR=$DATA_DIR
+MYSTERY_DB=$DATA_DIR/$POOL_KEY
+LOG_LEVEL=info
+TRUST_PROXY=true
+EOF
+
+# Append every parameter under our prefix as KEY=VALUE (SESSION_SECRET, plus
+# whichever OAuth credentials were supplied).
+aws ssm get-parameters-by-path \
+  --path "$SSM_PREFIX" \
+  --with-decryption \
+  --recursive \
+  --region "$REGION" \
+  --output json \
+  | jq -r '.Parameters[] | "\(.Name | split("/") | last)=\(.Value)"' >> "$ENV_FILE"
+
+chown "root:$APP_USER" "$ENV_FILE"
+chmod 640 "$ENV_FILE"
+umask 022
+
+grep -q '^SESSION_SECRET=' "$ENV_FILE" || { echo "FATAL: SESSION_SECRET missing from SSM" >&2; exit 1; }
+
+# ── systemd service ──────────────────────────────────────────────────────────
+cat > "/etc/systemd/system/$PROJECT.service" <<EOF
+[Unit]
+Description=Wiki-Guesser game server
+After=network-online.target
+Wants=network-online.target
+# Refuse to start with the data volume missing, rather than silently creating a
+# fresh empty database on the root volume. systemd derives the mount unit name
+# from the path itself, so this stays correct if DATA_DIR changes.
+RequiresMountsFor=$DATA_DIR
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=3
+
+# The app drains in-flight games on SIGTERM within SHUTDOWN_GRACE_MS (10s by
+# default). TimeoutStopSec must exceed that, or systemd SIGKILLs mid-drain and
+# every live game dies anyway.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=append:$LOG_DIR/app.log
+StandardError=append:$LOG_DIR/app.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$DATA_DIR $LOG_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now "$PROJECT.service"
+
+# ── Caddy (TLS termination + reverse proxy) ──────────────────────────────────
+# Chosen over nginx purely for automatic certificate issuance and renewal —
+# there is no cron job here to forget about.
+ARCH="$(uname -m)"
+case "$ARCH" in
+  aarch64) CADDY_ARCH="arm64" ;;
+  x86_64)  CADDY_ARCH="amd64" ;;
+  *) echo "FATAL: unsupported architecture $ARCH" >&2; exit 1 ;;
+esac
+
+curl -fsSL -o /tmp/caddy.tar.gz \
+  "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_$${CADDY_VERSION}_linux_$${CADDY_ARCH}.tar.gz"
+tar -xzf /tmp/caddy.tar.gz -C /tmp caddy
+install -m 0755 /tmp/caddy /usr/local/bin/caddy
+rm -f /tmp/caddy.tar.gz /tmp/caddy
+
+id -u caddy &>/dev/null || useradd --system --home-dir /var/lib/caddy --create-home --shell /sbin/nologin caddy
+mkdir -p /etc/caddy
+
+cat > /etc/caddy/Caddyfile <<EOF
+{
+	email ${acme_email}
+}
+
+$DOMAIN {
+	encode zstd gzip
+
+	# Caddy proxies the Socket.IO WebSocket upgrade transparently, and sets
+	# X-Forwarded-* — which is why the app runs with TRUST_PROXY=true.
+	reverse_proxy 127.0.0.1:3000
+}
+EOF
+
+cat > /etc/systemd/system/caddy.service <<'EOF'
+[Unit]
+Description=Caddy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+Restart=on-abnormal
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now caddy
+
+# ── Log shipping ─────────────────────────────────────────────────────────────
+# The app already emits one JSON object per line, so CloudWatch Logs Insights
+# can query fields directly with no parser.
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
+{
+  "agent": { "run_as_user": "root" },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "$LOG_DIR/app.log",
+            "log_group_name": "$LOG_GROUP",
+            "log_stream_name": "{instance_id}/app",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "$LOG_GROUP",
+            "log_stream_name": "{instance_id}/bootstrap",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "$PROJECT",
+    "append_dimensions": { "InstanceId": "\$${aws:InstanceId}" },
+    "metrics_collected": {
+      "mem": { "measurement": ["mem_used_percent"], "metrics_collection_interval": 60 },
+      "disk": {
+        "measurement": ["used_percent"],
+        "metrics_collection_interval": 300,
+        "resources": ["$DATA_DIR", "/"]
+      }
+    }
+  }
+}
+EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s \
+  -c "file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json"
+
+# Local rotation as well — CloudWatch retention governs the shipped copy, this
+# governs the copy on disk. Both are part of the retention promise in the
+# privacy policy.
+cat > "/etc/logrotate.d/$PROJECT" <<EOF
+$LOG_DIR/*.log {
+  daily
+  rotate 7
+  compress
+  missingok
+  notifempty
+  copytruncate
+}
+EOF
+
+# ── Redeploy helper ──────────────────────────────────────────────────────────
+# Usage over Session Manager:  sudo wiki-guesser-deploy [git-ref]
+cat > "/usr/local/bin/$PROJECT-deploy" <<EOF
+#!/bin/bash
+set -euo pipefail
+REF="\$${1:-$REPO_REF}"
+cd "$APP_DIR"
+git fetch --depth 1 origin "\$REF"
+git reset --hard FETCH_HEAD
+npm ci --omit=dev
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+systemctl restart "$PROJECT.service"
+sleep 3
+curl -fsS http://127.0.0.1:3000/healthz && echo " — deploy OK"
+EOF
+chmod +x "/usr/local/bin/$PROJECT-deploy"
+
+echo "Bootstrap complete. Health:"
+curl -fsS http://127.0.0.1:3000/healthz || echo "(app not answering yet — check journalctl -u $PROJECT)"

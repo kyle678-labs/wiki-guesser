@@ -223,10 +223,23 @@ the instance's disk at deploy; queries run against the local copy).
 
 - **Bottleneck:** synchronous SQLite reads block the single event loop, and the DB
   must fit in RAM or party-tier picks stall on disk seeks. The **lean ~908 MB DB in
-  ≥2 GB RAM** keeps every read warm.
-- **Sizing:** a ~$10/mo box (Lightsail 2 GB, or `t4g.small`) comfortably serves a
-  few hundred concurrent players. The full 11 GB DB would need ~16 GB RAM (~$60+/mo)
-  for no gameplay benefit — hence the lean build is the deploy artifact.
+  ≥4 GB RAM** keeps every read warm.
+- **Party tier is preloaded into memory** (`warmPartyIndex()` in `game/pool.js`, run
+  at boot from `index.js`). Its popularity floor admits ~1 row in 80, so the `rnd`
+  index walk was measurably expensive — 7.9 ms p50 / 32.6 ms p99, versus 2.6 ms for
+  chaos, whose floor equals the pool's own. All 5,433 party rows cost ~21 MB of heap
+  and ~1.2 s to load, and picks drop to 2.1 ms p50 / 6.1 ms p99. Chaos is not
+  preloaded: it is the whole 436k-row pool and is already fast.
+- **Sizing:** `t4g.medium` (4 GiB, ~$25/mo) comfortably serves **~1,000 concurrent
+  players**. The 4 GiB is the point — Node is single-threaded and the blocking read
+  is on that thread, so extra vCPUs buy nothing; RAM is what keeps the pool warm.
+  The full 11 GB DB would need ~16 GB RAM for no gameplay benefit.
+- **Leading indicator is event-loop lag, not CPU** — a blocked process looks idle.
+  `/healthz` exposes it and `metrics.js` logs it every 60 s.
+- **Next lever, if needed:** `rowToMystery` (JSON parse + clue build) is now the
+  dominant per-round cost for both tiers. After that, move pool reads to
+  `worker_threads`, then shard rooms across processes on one box — all of which are
+  cheaper than the multi-instance rework described below.
 - **Bandwidth is negligible** (small JSON; images on Wikimedia's CDN). Put
   Cloudflare's free tier in front for TLS + static caching + DDoS. No load balancer.
 

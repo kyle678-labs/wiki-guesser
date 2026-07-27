@@ -83,6 +83,9 @@ const WG = (() => {
             </div>
             <p class="hint">Guests can play private rooms &amp; casual matches, but not ranked.</p>
           `}
+          <p class="hint" style="margin-top:0.9rem">By playing you agree to our
+            <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and
+            <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
           <button class="ghost small" id="auth-cancel" style="margin-top:1rem">Cancel</button>
         </div>`;
       document.body.appendChild(back);

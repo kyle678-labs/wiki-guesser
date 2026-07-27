@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — Wiki-Guesser</title>
+<meta name="description" content="What Wiki-Guesser collects, why, how long it's kept, and how to get it deleted." />
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">Wiki-Guesser</a>
+    <div class="nav-right">
+      <button class="theme-toggle" data-theme-toggle title="Toggle theme">Theme</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <header class="hero">
+      <h1>Privacy Policy</h1>
+      <p class="tagline">What we collect, why we collect it, and how to make us delete it.</p>
+    </header>
+
+    <p class="legal-meta">
+      Last updated: 27 July 2026 · Operated by Kyle Maloney,
+      Illinois, United States ·
+      Contact: <a href="mailto:wiki.guesser.online@gmail.com">wiki.guesser.online@gmail.com</a>
+    </p>
+
+    <div class="card legal">
+      <h2>The short version</h2>
+      <p>
+        Wiki-Guesser is a Wikipedia guessing game. We collect as little as we can get away with:
+      </p>
+      <ul>
+        <li><strong>We never ask for your email address</strong> — not even when you sign in with Google or Discord.</li>
+        <li><strong>We never see your password.</strong> Signing in happens on Google's or Discord's site, not ours.</li>
+        <li><strong>Chat messages are never written to disk.</strong> They pass through memory to the other players in your room and are gone.</li>
+        <li><strong>No advertising, no analytics, no tracking cookies.</strong> The only cookie we set is the one that keeps you signed in.</li>
+        <li>You can play entirely as a guest, in which case we store no account for you at all.</li>
+      </ul>
+      <p>
+        The rest of this page is the detail. If anything here is unclear, ask us at
+        wiki.guesser.online@gmail.com and we'll explain it.
+      </p>
+
+      <h2>Who we are</h2>
+      <p>
+        Wiki-Guesser is operated by Kyle Maloney. For the purposes of the
+        UK and EU General Data Protection Regulation, we are the <em>data controller</em> for the information described
+        below. This policy covers the Wiki-Guesser website and game only.
+      </p>
+      <p>
+        This is a fan project. It is not affiliated with, endorsed by, or connected to the Wikimedia Foundation.
+      </p>
+
+      <h2>What we collect</h2>
+
+      <h3>If you play as a guest</h3>
+      <p>
+        You pick a display name and we generate a random guest ID. Both live in your session record (see
+        <a href="#cookies">Cookies</a>) and are shown to the other players in your room. We create no account and no
+        permanent record of you. When the session expires, it's gone.
+      </p>
+
+      <h3>If you sign in with Google or Discord</h3>
+      <p>
+        We ask those providers for the minimum profile scope and store only what the game needs to show you on a
+        scoreboard:
+      </p>
+      <table>
+        <thead><tr><th>What</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Which provider you used (Google or Discord)</td><td>To recognise you when you return</td></tr>
+          <tr><td>Your provider account ID</td><td>The stable identifier that links you to your rating</td></tr>
+          <tr><td>Your display name</td><td>Shown to opponents and on the leaderboard</td></tr>
+          <tr><td>Your avatar image URL</td><td>Shown next to your name</td></tr>
+          <tr><td>The date you first signed in</td><td>Account housekeeping</td></tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>We do not request or store your email address</strong>, contact list, friends, servers, posts, or
+        anything else. We never receive your password. You can revoke our access at any time in your
+        <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google account permissions</a>
+        or <a href="https://discord.com/settings/authorized-apps" target="_blank" rel="noopener">Discord authorised apps</a>.
+      </p>
+
+      <h3>Gameplay and ranking data</h3>
+      <p>
+        If you play <em>ranked</em> matches with an account, we store your rating, games played, and win/loss/draw
+        counts for each ladder, plus one row per completed ranked match recording the mode, both players, the scores,
+        the resulting ratings, and when it finished. This is what makes a ladder a ladder — without it there is no
+        ranking. Casual and private-room games are not recorded.
+      </p>
+
+      <h3>Chat messages</h3>
+      <p>
+        Chat is relayed in memory to the other players in your room and <strong>never written to a database or log
+        file</strong>. We keep no history of it and cannot retrieve it later. Please bear that in mind if you report
+        someone — tell us what happened, because we can't go and read it ourselves.
+      </p>
+
+      <h3>Server logs and security data</h3>
+      <p>
+        Our server writes a log line for each web request containing your IP address, the time, the page requested, the
+        response status, and how long it took. We also count requests per IP address in memory to stop one person
+        flooding the service. IP addresses are personal data, and we treat them as such: we use them only to keep the
+        service up and to investigate abuse, and we delete the logs on the schedule below.
+      </p>
+
+      <h2 id="cookies">Cookies and local storage</h2>
+      <p>
+        We use one cookie and one item of browser local storage. Neither tracks you, and neither is shared with anyone.
+        Because both are strictly necessary to provide a service you asked for, they do not require a consent banner
+        under the ePrivacy Directive — but you should still know they exist:
+      </p>
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Expires</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>connect.sid</code></td>
+            <td>Cookie</td>
+            <td>Keeps you signed in and links you to your game room. Marked HttpOnly and SameSite=Lax, and Secure when served over HTTPS, so it can't be read by scripts or sent from other sites.</td>
+            <td>30 days</td>
+          </tr>
+          <tr>
+            <td><code>wg-theme</code></td>
+            <td>Local storage</td>
+            <td>Remembers whether you chose light or dark mode. Never sent to our server.</td>
+            <td>Until you clear it</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>We run no advertising, no analytics, and no third-party tracking of any kind.</strong> If that ever
+        changes we will update this policy and, where the law requires it, ask for your consent <em>before</em> setting
+        any non-essential cookie.
+      </p>
+
+      <h2>Who your data reaches</h2>
+      <p>We do not sell your data, and we do not share it for anyone else's marketing. It reaches these parties only:</p>
+      <ul>
+        <li>
+          <strong>Google or Discord</strong> — only if you choose to sign in with them. They necessarily learn that you
+          signed in to Wiki-Guesser. Their handling is governed by
+          <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's privacy policy</a> and
+          <a href="https://discord.com/privacy" target="_blank" rel="noopener">Discord's privacy policy</a>.
+        </li>
+        <li>
+          <strong>Wikimedia Foundation</strong> — article images are loaded by your browser directly from Wikimedia's
+          servers rather than proxied through us. That means Wikimedia receives your IP address and browser user-agent
+          when an image loads, exactly as if you had visited Wikipedia. See the
+          <a href="https://foundation.wikimedia.org/wiki/Policy:Privacy_policy" target="_blank" rel="noopener">Wikimedia privacy policy</a>.
+        </li>
+        <li>
+          <strong>Amazon Web Services</strong> — our hosting provider, based in the United States. They store the data
+          on our behalf under their standard data processing terms.
+        </li>
+        <li>
+          <strong>Other players</strong> — your display name, avatar, score, and rating are visible to people in your
+          game, and appear on the public leaderboard if you play ranked.
+        </li>
+        <li>
+          <strong>If the law requires it</strong> — we will disclose data where we are legally obliged to, and will tell
+          you unless we are forbidden from doing so.
+        </li>
+      </ul>
+
+      <h2>Why we're allowed to hold it (legal bases)</h2>
+      <p>If you are in the UK or EEA, the GDPR requires us to name a lawful basis for each use:</p>
+      <table>
+        <thead><tr><th>Data</th><th>Lawful basis</th></tr></thead>
+        <tbody>
+          <tr><td>Account profile, session, gameplay and ranking data</td><td><strong>Performance of a contract</strong> — you asked us to run a game for you, and we can't without it.</td></tr>
+          <tr><td>Server logs, rate-limit counters</td><td><strong>Legitimate interests</strong> — keeping the service available, secure, and free of abuse. We've weighed this against your privacy and limited both what we log and how long we keep it.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>How long we keep it</h2>
+      <table>
+        <thead><tr><th>Data</th><th>Retention</th></tr></thead>
+        <tbody>
+          <tr><td>Session records (including guest names)</td><td>30 days, then deleted automatically</td></tr>
+          <tr><td>Server logs containing IP addresses</td><td>30 days, then deleted automatically</td></tr>
+          <tr><td>Rate-limit counters</td><td>Held in memory only; gone on restart</td></tr>
+          <tr><td>Account profile, ratings and match history</td><td>Until you ask us to delete it, or after 24 months of inactivity</td></tr>
+          <tr><td>Chat messages</td><td>Never stored</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Your rights</h2>
+      <p>
+        If you are in the UK or EEA you have the right to <strong>access</strong> your data, to have it
+        <strong>corrected</strong> or <strong>erased</strong>, to <strong>restrict</strong> or <strong>object to</strong>
+        how we use it, and to receive it in a <strong>portable</strong> format. Where we rely on legitimate interests,
+        you can object and we will stop unless we have compelling grounds not to.
+      </p>
+      <p>
+        We extend these same rights to everyone, wherever you live — it would be strange to do otherwise for a game.
+        If you are a California resident, you also have rights under the CCPA/CPRA, including to know what we collect
+        and to request deletion. We do not sell or share personal information as those terms are defined there.
+      </p>
+      <p>
+        <strong>To exercise any of this, email wiki.guesser.online@gmail.com</strong> from an account you
+        can demonstrate control of, or tell us your in-game display name and which provider you signed in with. We'll
+        respond within 30 days. There is currently no self-service delete button — we do it by hand, and we do it
+        properly.
+      </p>
+      <p>
+        Deleting your account removes your profile and ratings. Past match records are anonymised rather than deleted,
+        because they are also the other player's record of a game they played.
+      </p>
+      <p>
+        If you think we've mishandled your data you can complain to your local supervisory authority — in the UK, the
+        <a href="https://ico.org.uk/make-a-complaint/" target="_blank" rel="noopener">Information Commissioner's Office</a>.
+        We'd appreciate the chance to fix it first.
+      </p>
+
+      <h2>International transfers</h2>
+      <p>
+        Our servers are in the United States. If you access the game from the UK or EEA, your data is transferred there.
+        We rely on the UK/EU Standard Contractual Clauses with our hosting provider as the safeguard for that transfer.
+      </p>
+
+      <h2>Children</h2>
+      <p>
+        Wiki-Guesser is not intended for children under 13, and we don't knowingly collect their data. In some EU
+        countries the age of digital consent is 16 — if you are under the age of consent where you live, please use the
+        game only with a parent or guardian's permission. If you believe a child has given us data, email us and we'll
+        delete it.
+      </p>
+
+      <h2>Security</h2>
+      <p>
+        We serve the site over HTTPS, mark session cookies HttpOnly and SameSite, apply a strict Content Security
+        Policy, and rate-limit requests. We never handle your password. No system is perfectly secure, and we won't
+        pretend otherwise — but we keep so little data that there is very little to lose.
+      </p>
+
+      <h2>Changes to this policy</h2>
+      <p>
+        If we change this policy we'll update the date at the top. If the change is significant — new categories of data,
+        a new third party, or anything involving advertising — we'll say so prominently on the site before it takes
+        effect.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions, requests, or complaints: wiki.guesser.online@gmail.com.
+      </p>
+    </div>
+  </div>
+
+  <footer>
+    <p><a href="/">Home</a> · <a href="/terms">Terms of Service</a> · Privacy Policy</p>
+    <p class="hint">Wiki-Guesser · images &amp; text from <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a>, CC BY-SA. Not affiliated with the Wikimedia Foundation.</p>
+  </footer>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/legal.js"></script>
+</body>
+</html>

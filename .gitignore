@@ -8,3 +8,12 @@ data/
 *.sqlite-shm
 .DS_Store
 *.gz
+
+# Terraform — tfvars holds OAuth secrets, state holds the session secret.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

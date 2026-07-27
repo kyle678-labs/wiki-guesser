@@ -39,6 +39,8 @@ the code in the other to try a full multiplayer round.
 | `LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`silent`. JSON logs on stdout. Default `info`. |
 | `RATE_LIMIT_AUTH` / `RATE_LIMIT_API` / `RATE_WINDOW_MS` | Per-IP HTTP rate limits. |
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
+| `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
+| `LEADERBOARD_TTL_MS` / `METRICS_INTERVAL_MS` | Leaderboard cache TTL; how often the metrics line is logged. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Discord OAuth. Redirect URI: `{BASE_URL}/auth/discord/callback`. |
 | `ADSENSE_CLIENT` / `ADSENSE_SLOT` | Google AdSense publisher + slot IDs. Leave blank to hide ads. |
@@ -61,6 +63,26 @@ Google or Discord account so ratings have a stable identity.
 Create a Google AdSense account, get your publisher ID (`ca-pub-…`) and a display
 ad unit slot ID, and put them in `ADSENSE_CLIENT` / `ADSENSE_SLOT`. Ad placeholders
 appear at the top, mid-page, and in the game sidebar.
+
+> **Ads are off by default, and turning them on has compliance strings attached.**
+> The site currently sets only a strictly-necessary session cookie, which is why it
+> needs no consent banner. Ad cookies are not strictly necessary, so before setting
+> `ADSENSE_CLIENT` you need (a) a banner that gets consent *before* the ad script
+> loads, (b) a Google-certified Consent Management Platform for EEA/UK visitors —
+> Google's EU user consent policy does not accept a hand-rolled banner — and (c) an
+> update to `public/privacy.html`, which currently states that we run no advertising.
+
+## Legal pages
+
+`public/privacy.html` and `public/terms.html` are served at `/privacy` and `/terms`
+and linked from the footer and the sign-in modal. They are written to match what
+the code actually does — no email is collected, chat is never persisted, one
+session cookie — so **if you change what the server stores, update them.**
+
+They contain unfilled placeholders, highlighted in amber on the rendered page and
+marked `class="todo"` in the source. Search for `todo` and fill in every one
+before launch. **Have a lawyer review both documents** — they are a solid,
+accurate starting point, not legal advice.
 
 ## Tests
 

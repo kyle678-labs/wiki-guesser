@@ -22,6 +22,7 @@ SqliteStore.prototype.startInterval = function () {
 
 const config = require("./config");
 const log = require("./log");
+const metrics = require("./metrics");
 const { db, getLeaderboard } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
 const { attachSockets } = require("./socket");
@@ -140,6 +141,9 @@ function buildServer(overrides = {}) {
       uptime: Math.round(process.uptime()),
       rooms: manager ? manager.rooms.size : 0,
       version: require("../package.json").version,
+      // Exposed here so any monitor can scrape the leading indicator without
+      // needing to parse logs or ship a custom CloudWatch metric.
+      ...metrics.snapshot(),
     });
   });
 

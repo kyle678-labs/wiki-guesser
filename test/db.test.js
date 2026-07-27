@@ -69,3 +69,28 @@ test("leaderboard is per ladder and only lists players with games", () => {
   const mixedParty = getLeaderboard(ladderKey("mixed", "party"), 10);
   assert.ok(!mixedParty.some((r) => r.id === c.id), "absent from mixed·party (no games there)");
 });
+
+test("the leaderboard is cached, and a new result invalidates it", () => {
+  const e = upsertOAuthUser({ provider: "test", providerId: "e", displayName: "Eve" });
+  const f = upsertOAuthUser({ provider: "test", providerId: "f", displayName: "Fay" });
+  const mode = ladderKey("image", "party");
+
+  playRanked(mode, e, f);
+  const first = getLeaderboard(mode, 10);
+  // Same array instance ⇒ served from cache rather than re-queried. This is
+  // what keeps the landing page off the event loop under traffic.
+  assert.equal(getLeaderboard(mode, 10), first, "a repeat read is cached");
+
+  const eRatingBefore = first.find((r) => r.id === e.id).rating;
+
+  // Recording a match must drop the cache, or the ladder would show stale
+  // ratings for up to the TTL — the failure a pure time-based cache would have.
+  playRanked(mode, f, e);
+  const second = getLeaderboard(mode, 10);
+  assert.notEqual(second, first, "a new result invalidates the cache");
+  assert.notEqual(
+    second.find((r) => r.id === e.id).rating,
+    eRatingBefore,
+    "the fresh read reflects the rating that just changed"
+  );
+});

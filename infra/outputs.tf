@@ -1,0 +1,47 @@
+output "public_ip" {
+  description = "Elastic IP. Point your domain's A record here — Caddy cannot issue a certificate until DNS resolves to it."
+  value       = aws_eip.app.public_ip
+}
+
+output "instance_id" {
+  description = "Shell in without SSH: aws ssm start-session --target <this>"
+  value       = aws_instance.app.id
+}
+
+output "artifacts_bucket" {
+  description = "Upload the mystery pool here before first boot."
+  value       = aws_s3_bucket.artifacts.bucket
+}
+
+output "log_group" {
+  description = "CloudWatch log group carrying the app's JSON logs."
+  value       = aws_cloudwatch_log_group.app.name
+}
+
+output "data_volume_id" {
+  description = "The volume holding users, ratings and match history. Snapshotted daily by DLM."
+  value       = aws_ebs_volume.data.id
+}
+
+output "oauth_callback_urls" {
+  description = "Register these exactly in the Google and Discord developer consoles."
+  value = {
+    google  = "https://${var.domain_name}/auth/google/callback"
+    discord = "https://${var.domain_name}/auth/discord/callback"
+  }
+}
+
+output "next_steps" {
+  description = "Ordered checklist after the first apply."
+  value       = <<-EOT
+    1. Point ${var.domain_name} A record at ${aws_eip.app.public_ip} (DNS-only, not proxied,
+       so Let's Encrypt's HTTP-01 challenge can reach the box).
+    2. Upload the mystery pool:
+         aws s3 cp data/mysteries-lean.sqlite s3://${aws_s3_bucket.artifacts.bucket}/${var.mystery_pool_s3_key}
+    3. Watch the bootstrap:
+         aws ssm start-session --target ${aws_instance.app.id}
+         sudo tail -f /var/log/user-data.log
+    4. Verify: curl https://${var.domain_name}/healthz
+    5. Register the OAuth callback URLs above with Google and Discord.
+  EOT
+}

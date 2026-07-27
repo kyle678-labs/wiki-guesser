@@ -138,12 +138,31 @@ function getUserRatings(userId) {
   return out;
 }
 
-const getLeaderboard = (mode, limit = 50) => stmts.leaderboard.all(mode, limit);
+// The leaderboard is rendered on the landing page, so this query scales with
+// total visitors rather than with concurrent players — a traffic spike would
+// otherwise put one synchronous SQLite read on the event loop per page view.
+//
+// Cached with a short TTL *and* invalidated on write, so it never actually
+// serves a stale ladder: recordRankedMatch is the only thing that changes
+// ratings, and it clears the cache. The TTL is just a backstop for out-of-band
+// writes (e.g. scripts/migrate-ratings-to-tiers.js against a live database).
+const LEADERBOARD_TTL_MS = parseInt(process.env.LEADERBOARD_TTL_MS, 10) || 30000;
+const leaderboardCache = new Map(); // "mode:limit" -> { at, rows }
+
+function getLeaderboard(mode, limit = 50) {
+  const key = `${mode}:${limit}`;
+  const hit = leaderboardCache.get(key);
+  if (hit && Date.now() - hit.at < LEADERBOARD_TTL_MS) return hit.rows;
+  // Callers only ever map over this, never mutate it, so the array is shared.
+  const rows = stmts.leaderboard.all(mode, limit);
+  leaderboardCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
 
 // Persist a ranked 1v1 result for a given mode and bump both players' ratings.
 // `result` = { mode, a:{id}, b:{id}, aScore, bScore, outcome,
 //              aRatingAfter, bRatingAfter, aDelta, bDelta }
-const recordRankedMatch = db.transaction((result) => {
+const recordRankedMatchTx = db.transaction((result) => {
   const o = result.outcome; // from A's perspective: 1 A-win, 0 B-win, 0.5 draw
   stmts.upsertRating.run({
     user_id: result.a.id,
@@ -175,6 +194,13 @@ const recordRankedMatch = db.transaction((result) => {
     created_at: Date.now(),
   });
 });
+
+// Ratings just moved, so any cached ladder is now wrong. Clearing here is what
+// lets getLeaderboard cache aggressively without ever showing a stale result.
+function recordRankedMatch(result) {
+  recordRankedMatchTx(result);
+  leaderboardCache.clear();
+}
 
 module.exports = {
   db,
