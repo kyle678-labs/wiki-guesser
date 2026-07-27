@@ -144,15 +144,25 @@ locals {
   }
   # Only create parameters for credentials actually supplied; the app treats a
   # missing provider as "disabled" and falls back to guests-only.
-  oauth_params_set = { for k, v in local.oauth_params : k => v if v != "" }
+  #
+  # for_each iterates the NAMES, not the map. Every value above comes from a
+  # sensitive variable, which marks anything derived from it sensitive too —
+  # including a map built by filtering on those values — and Terraform refuses
+  # sensitive for_each arguments because each key becomes a resource address
+  # that shows up in plan output and state. The names here are constants
+  # (GOOGLE_CLIENT_ID and friends) and carry no secret; all nonsensitive()
+  # discards is the inherited mark on which of them are present, which the
+  # parameter names themselves already reveal. The secrets stay sensitive: they
+  # are looked up from the map below, never used as a key.
+  oauth_param_names = nonsensitive(toset([for k, v in local.oauth_params : k if v != ""]))
 }
 
 resource "aws_ssm_parameter" "oauth" {
-  for_each = local.oauth_params_set
+  for_each = local.oauth_param_names
 
   name  = "${local.ssm_prefix}/${each.key}"
   type  = "SecureString"
-  value = each.value
+  value = local.oauth_params[each.key]
 }
 
 # ── Artifacts bucket ─────────────────────────────────────────────────────────

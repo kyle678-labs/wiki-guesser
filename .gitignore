@@ -11,7 +11,7 @@ data/
 
 # Terraform — tfvars holds OAuth secrets, state holds the session secret.
 .terraform/
-.terraform.lock.hcl
+# .terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
