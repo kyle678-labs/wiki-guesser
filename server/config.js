@@ -3,6 +3,11 @@ require("dotenv").config();
 
 const path = require("path");
 const bool = (v) => v === "true" || v === "1";
+// `parseInt(x, 10) || dflt` silently swallows a deliberate 0, which several of
+// the matchmaking knobs below accept as a meaningful value (a zero-width search
+// window, or growth disabled).
+const int = (v, dflt) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : dflt);
+const num = (v, dflt) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : dflt);
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -102,6 +107,28 @@ const config = {
     windowMs: parseInt(process.env.RATE_WINDOW_MS, 10) || 15 * 60 * 1000,
     auth: parseInt(process.env.RATE_LIMIT_AUTH, 10) || 30, // /auth/* per window
     api: parseInt(process.env.RATE_LIMIT_API, 10) || 300, // /api/* per window
+  },
+
+  // Ranked matchmaking. A waiting player accepts opponents within `startWindow`
+  // rating points, and that window grows by `growthPerSec` for every second they
+  // wait, up to `maxWindow`. With the defaults a player searches ±100 instantly,
+  // ±500 after 20s, and effectively anyone after ~70s — so a tight ladder when
+  // there is a crowd, and a game rather than an empty screen when there isn't.
+  //
+  // Casual is deliberately excluded: it promises an instant game with no rating
+  // on the line, and guests (who have no rating at all) play it.
+  matchmaking: {
+    startWindow: int(process.env.MM_START_WINDOW, 100),
+    growthPerSec: num(process.env.MM_GROWTH_PER_SEC, 20),
+    maxWindow: int(process.env.MM_MAX_WINDOW, 1500),
+    // A rating with almost no games behind it is a guess, not a measurement, so
+    // those players search wider from the moment they queue.
+    provisionalBonus: int(process.env.MM_PROVISIONAL_BONUS, 150),
+    provisionalGames: int(process.env.MM_PROVISIONAL_GAMES, 10),
+    // How often waiting ranked queues are re-swept as windows widen.
+    tickMs: int(process.env.MM_TICK_MS, 1000),
+    // Give up rather than leave someone staring at a spinner forever. 0 disables.
+    rankedTimeoutMs: int(process.env.MM_RANKED_TIMEOUT_MS, 3 * 60 * 1000),
   },
 
   // Automatic erasure of dormant accounts. This exists to keep the retention

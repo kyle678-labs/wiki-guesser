@@ -5,7 +5,8 @@ const config = require("./config");
 const log = require("./log");
 const { fetchMystery } = require("./game/pool");
 const { scoreGuess, creditLabel } = require("./game/scoring");
-const { updatePair, tierFor } = require("./elo");
+const { updatePair, tierFor, START_RATING } = require("./elo");
+const { findPair, queueStatus } = require("./matchmaking");
 const { recordRankedMatch, getRating } = require("./db");
 const { normalizeMode } = require("./modes");
 const { normalizeTier } = require("./tiers");
@@ -14,6 +15,12 @@ const { makeBot, botGuess, botDelayMs } = require("./bot");
 
 const makeCode = customAlphabet("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 5);
 const channel = (code) => `room:${code}`;
+
+// Bounds on a private room's guess timer. The floor is short enough for a
+// genuine speed round but long enough to read a clue and type; the ceiling
+// stops a host parking everyone else on a five-minute round.
+const MIN_GUESS_SECONDS = 5;
+const MAX_GUESS_SECONDS = 120;
 
 // ── A single game room ───────────────────────────────────────────────────────
 class Room {
@@ -30,6 +37,10 @@ class Room {
       mode: normalizeTier(settings.mode),
       clue: normalizeMode(settings.clue), // image | text | mixed (also the ranked ladder)
       maxPlayers: clampInt(settings.maxPlayers, 2, config.game.maxPlayersPerRoom, config.game.maxPlayersPerRoom),
+      // How long players get to answer. Private rooms can change this; ranked
+      // and casual rooms are built without it and so keep the server default,
+      // which is what makes their speed bonuses comparable across matches.
+      guessSeconds: clampInt(settings.guessSeconds, MIN_GUESS_SECONDS, MAX_GUESS_SECONDS, config.game.guessSeconds),
     };
 
     this.players = new Map(); // identityId -> player
@@ -287,7 +298,7 @@ class Room {
     this.answer = mystery;
     this.phase = "guessing";
     this.roundStartedAt = Date.now();
-    this.roundEndsAt = this.roundStartedAt + config.game.guessSeconds * 1000;
+    this.roundEndsAt = this.roundStartedAt + this.settings.guessSeconds * 1000;
     this.io.to(channel(this.code)).emit("round:start", {
       round: this.round,
       totalRounds: this.settings.rounds,
@@ -300,7 +311,7 @@ class Room {
     });
     this.broadcastState();
     this.scheduleBotMoves();
-    this.timers.guess = setTimeout(() => this.endGuessing(), config.game.guessSeconds * 1000);
+    this.timers.guess = setTimeout(() => this.endGuessing(), this.settings.guessSeconds * 1000);
   }
 
   // Each bot submits a computed guess after a human-like delay within the window.
@@ -311,7 +322,7 @@ class Room {
         this.botTimers.delete(p.id);
         if (this.phase !== "guessing") return;
         this.submitGuess(p.id, botGuess(this.answer));
-      }, botDelayMs(config.game.guessSeconds));
+      }, botDelayMs(this.settings.guessSeconds));
       this.botTimers.set(p.id, t);
     }
   }
@@ -346,7 +357,9 @@ class Room {
     this.clearTimers();
     this.phase = "reveal";
 
-    const windowMs = config.game.guessSeconds * 1000;
+    // The speed bonus decays across this room's own window, so a short timer
+    // stays as winnable as a long one rather than collapsing the bonus to zero.
+    const windowMs = this.settings.guessSeconds * 1000;
     const results = [];
     for (const p of this.players.values()) {
       const r = scoreGuess(p.guess, this.answer);
@@ -542,11 +555,24 @@ class Room {
   }
 
   updateSettings(byId, patch) {
-    if (this.isPrivate && byId !== this.hostId) return { error: "Only the host can change settings." };
+    // A matchmaking room's settings come from the queue both players chose, and
+    // for ranked they decide which ladder the Elo is written to — so a player
+    // editing them during the pre-match countdown could farm or dodge a ladder
+    // they never queued on. Fixed once the match is made.
+    if (!this.isPrivate) return { error: "This match's settings are fixed by the queue you joined." };
+    if (byId !== this.hostId) return { error: "Only the host can change settings." };
     if (this.phase !== "lobby" && this.phase !== "done") return { error: "Can't change settings mid-game." };
     if (patch.rounds != null) this.settings.rounds = clampInt(patch.rounds, 1, 15, this.settings.rounds);
     if (patch.mode != null) this.settings.mode = normalizeTier(patch.mode);
     if (patch.clue != null) this.settings.clue = normalizeMode(patch.clue);
+    if (patch.guessSeconds != null) {
+      this.settings.guessSeconds = clampInt(
+        patch.guessSeconds,
+        MIN_GUESS_SECONDS,
+        MAX_GUESS_SECONDS,
+        this.settings.guessSeconds
+      );
+    }
     if (patch.maxPlayers != null)
       this.settings.maxPlayers = clampInt(patch.maxPlayers, 2, config.game.maxPlayersPerRoom, this.settings.maxPlayers);
     this.broadcastState();
@@ -586,8 +612,14 @@ class RoomManager {
     this.io = io;
     this.rooms = new Map(); // code -> Room
     this.locate = new Map(); // identityId -> code
-    this.queues = new Map(); // "kind:clue:tier" -> array of { user, socketId }
+    // "kind:clue:tier" -> array of
+    //   { user, socketId, enqueuedAt, rating, provisional }
+    // The last three exist for ranked pairing; casual ignores them.
+    this.queues = new Map();
     this.botFillTimers = new Map(); // identityId -> timeout (casual bot-fill)
+    // One shared timer re-sweeps the ranked queues while anyone is waiting, so
+    // widening search windows are acted on. Null whenever nobody is queued.
+    this.rankedTicker = null;
     // Mystery source is injectable so tests can supply a deterministic one.
     this.fetchMystery = opts.fetchMystery || fetchMystery;
   }
@@ -630,6 +662,20 @@ class RoomManager {
     return this.queues.get(key);
   }
 
+  // The queue entry for a player on a given ladder. Ranked pairing needs the
+  // rating they hold on THAT ladder — not their best or their most recent —
+  // because each clue × tier pair is rated independently.
+  makeEntry(user, socket, clue, tier) {
+    const ladder = user.ratings && user.ratings[ladderKey(clue, tier)];
+    return {
+      user,
+      socketId: socket.id,
+      enqueuedAt: Date.now(),
+      rating: ladder ? ladder.rating : START_RATING,
+      provisional: !ladder || ladder.gamesPlayed < config.matchmaking.provisionalGames,
+    };
+  }
+
   enqueue(kind, clue, tier, user, socket) {
     if (kind === "ranked" && !user.ranked) {
       return { error: "Sign in with Google or Discord to play ranked." };
@@ -639,14 +685,23 @@ class RoomManager {
     // Drop any stale entry for this identity across all queues first.
     this.dequeue(user.id);
     const queue = this.queueFor(key);
-    queue.push({ user, socketId: socket.id });
+    const entry = this.makeEntry(user, socket, clue, effTier);
+    queue.push(entry);
     this.tryMatch(key);
+
+    const stillWaiting = queue.some((e) => e.user.id === user.id);
     // Casual: if we didn't immediately pair with a human, fill with a bot after
-    // a short wait so the player isn't stuck in an empty queue.
-    if (kind === "casual" && queue.some((e) => e.user.id === user.id)) {
-      this.scheduleBotFill(user.id, key);
-    }
-    return { ok: true, position: queue.length, tier: effTier };
+    // a short wait so the player isn't stuck in an empty queue. Ranked never
+    // gets a bot — a rating has to be won against a person.
+    if (kind === "casual" && stillWaiting) this.scheduleBotFill(user.id, key);
+    if (kind === "ranked" && stillWaiting) this.startRankedTicker();
+
+    return {
+      ok: true,
+      position: queue.length,
+      tier: effTier,
+      ...(kind === "ranked" ? queueStatus(entry, Date.now()) : {}),
+    };
   }
 
   // Mutates the queue arrays in place so any held references stay valid.
@@ -657,6 +712,13 @@ class RoomManager {
         if (q[i].user.id === identityId) q.splice(i, 1);
       }
     }
+    // That may have been the last ranked player waiting; don't keep ticking.
+    if (this.rankedTicker && !this.hasRankedWaiting()) this.stopRankedTicker();
+  }
+
+  hasRankedWaiting() {
+    for (const [key, q] of this.queues) if (key.startsWith("ranked:") && q.length) return true;
+    return false;
   }
 
   // ── Casual bot-fill ──────────────────────────────────────────────────────────
@@ -721,7 +783,14 @@ class RoomManager {
   }
 
   tryMatch(key) {
-    const [kind, clue, tier] = key.split(":");
+    const [kind] = key.split(":");
+    return kind === "ranked" ? this.tryMatchRanked(key) : this.tryMatchCasual(key);
+  }
+
+  // Casual stays first-come-first-served. It promises an instant game with no
+  // rating at stake, and guests — who have no rating to match on — play it.
+  tryMatchCasual(key) {
+    const [, clue, tier] = key.split(":");
     const queue = this.queueFor(key);
     while (queue.length >= 2) {
       const a = queue.shift();
@@ -737,25 +806,139 @@ class RoomManager {
         queue.unshift(a);
         return;
       }
-      let code;
-      do {
-        code = makeCode();
-      } while (this.rooms.has(code));
-      const room = new Room(this.io, this, {
-        code,
-        ranked: kind === "ranked",
-        isPrivate: false,
-        // Tier is baked into the queue key (ranked → RANKED_TIER, casual → chosen).
-        settings: { rounds: config.game.roundsPerGame, mode: tier, clue },
+      this.startMatch("casual", clue, tier, a, b);
+    }
+  }
+
+  // Ranked pairs on rating: the closest two players who currently accept each
+  // other (see matchmaking.js). Repeats until the queue holds no legal pair —
+  // one sweep can settle several matches when a crowd arrives at once.
+  tryMatchRanked(key) {
+    const [, clue, tier] = key.split(":");
+    const queue = this.queueFor(key);
+    this.pruneDeadSockets(queue);
+
+    while (queue.length >= 2) {
+      const pair = findPair(queue, Date.now());
+      if (!pair) return; // nobody will have anybody yet — the ticker retries
+      // Splice the higher index first so the lower one stays valid.
+      const [b] = queue.splice(pair.j, 1);
+      const [a] = queue.splice(pair.i, 1);
+      const sa = this.io.sockets.sockets.get(a.socketId);
+      const sb = this.io.sockets.sockets.get(b.socketId);
+      // A socket can still vanish between the sweep and here. Put whoever is
+      // left back rather than dropping a waiting player on the floor.
+      if (!sa || !sb) {
+        if (sa) queue.push(a);
+        if (sb) queue.push(b);
+        continue;
+      }
+      const room = this.startMatch("ranked", clue, tier, a, b);
+      log.info("ranked_matched", {
+        code: room.code,
+        ladder: ladderKey(clue, tier),
+        ratings: [a.rating, b.rating],
+        gap: pair.gap,
+        waitedMs: [Date.now() - a.enqueuedAt, Date.now() - b.enqueuedAt],
       });
-      this.rooms.set(code, room);
-      // Matched with a human — no bot needed for either player.
-      this.cancelBotFill(a.user.id);
-      this.cancelBotFill(b.user.id);
-      room.addPlayer(a.user, sa);
-      room.addPlayer(b.user, sb);
-      this.io.to(channel(code)).emit("match:found", { code, ranked: kind === "ranked", clue, tier });
-      this.startAfterCountdown(room);
+    }
+  }
+
+  // Drop entries whose socket has gone. The disconnect handler already dequeues,
+  // so this is a backstop that keeps the ticker from pairing against a ghost.
+  pruneDeadSockets(queue) {
+    for (let i = queue.length - 1; i >= 0; i--) {
+      if (!this.io.sockets.sockets.get(queue[i].socketId)) queue.splice(i, 1);
+    }
+  }
+
+  // Build the room a matched pair drops into and start the countdown. Shared by
+  // both queues so ranked and casual matches are set up identically.
+  startMatch(kind, clue, tier, a, b) {
+    let code;
+    do {
+      code = makeCode();
+    } while (this.rooms.has(code));
+    const ranked = kind === "ranked";
+    const room = new Room(this.io, this, {
+      code,
+      ranked,
+      isPrivate: false,
+      // Tier is baked into the queue key — both queues carry the player's choice.
+      settings: { rounds: config.game.roundsPerGame, mode: tier, clue },
+    });
+    this.rooms.set(code, room);
+    // Matched with a human — no bot needed for either player.
+    this.cancelBotFill(a.user.id);
+    this.cancelBotFill(b.user.id);
+    room.addPlayer(a.user, this.io.sockets.sockets.get(a.socketId));
+    room.addPlayer(b.user, this.io.sockets.sockets.get(b.socketId));
+    this.io.to(channel(code)).emit("match:found", {
+      code,
+      ranked,
+      clue,
+      tier,
+      // Lets the client say who it found rather than just that it found someone.
+      ...(ranked ? { ratingGap: Math.abs(a.rating - b.rating) } : {}),
+    });
+    this.startAfterCountdown(room);
+    return room;
+  }
+
+  // ── Ranked queue ticker ──────────────────────────────────────────────────────
+  // Search windows widen with waiting time, so a pair that is illegal now may be
+  // legal a second from now. One shared timer re-sweeps every ranked queue
+  // rather than one timer per waiting player, and it exists only while somebody
+  // is actually waiting — an idle server runs no matchmaking work at all.
+  startRankedTicker() {
+    if (this.rankedTicker) return;
+    this.rankedTicker = setInterval(() => this.sweepRanked(), config.matchmaking.tickMs);
+    // Must never be the reason the process stays alive through a shutdown.
+    if (this.rankedTicker.unref) this.rankedTicker.unref();
+  }
+
+  stopRankedTicker() {
+    if (!this.rankedTicker) return;
+    clearInterval(this.rankedTicker);
+    this.rankedTicker = null;
+  }
+
+  sweepRanked() {
+    const now = Date.now();
+    let waiting = 0;
+    for (const [key, queue] of this.queues) {
+      if (!key.startsWith("ranked:") || queue.length === 0) continue;
+      this.expireRanked(key, now);
+      this.tryMatch(key);
+      this.publishQueueStatus(key, now);
+      waiting += this.queueFor(key).length;
+    }
+    if (waiting === 0) this.stopRankedTicker();
+  }
+
+  // Give up rather than leave someone staring at a spinner indefinitely. On a
+  // small ladder at a quiet hour there may genuinely be nobody to play.
+  expireRanked(key, now) {
+    const timeout = config.matchmaking.rankedTimeoutMs;
+    if (!timeout) return;
+    const queue = this.queueFor(key);
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const waited = now - queue[i].enqueuedAt;
+      if (waited < timeout) continue;
+      const [entry] = queue.splice(i, 1);
+      const socket = this.io.sockets.sockets.get(entry.socketId);
+      log.info("ranked_queue_timeout", { ladder: key.slice("ranked:".length), waitedMs: waited });
+      if (socket) socket.emit("queue:timeout", { kind: "ranked", waitedMs: waited });
+    }
+  }
+
+  // Tell each waiting player how long they've been searching and how wide their
+  // window has grown, so the wait is legible instead of an indefinite spinner.
+  publishQueueStatus(key, now) {
+    const queue = this.queueFor(key);
+    for (const entry of queue) {
+      const socket = this.io.sockets.sockets.get(entry.socketId);
+      if (socket) socket.emit("queue:status", { ...queueStatus(entry, now), waiting: queue.length });
     }
   }
 
@@ -764,6 +947,7 @@ class RoomManager {
   shutdown() {
     for (const t of this.botFillTimers.values()) clearTimeout(t);
     this.botFillTimers.clear();
+    this.stopRankedTicker();
     for (const room of [...this.rooms.values()]) room.dispose();
     this.queues = new Map();
   }

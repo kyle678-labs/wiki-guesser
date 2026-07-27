@@ -210,11 +210,19 @@
     const isHost = state.hostId === myId;
     if (inLobby) {
       show("lobby-box");
-      $("share-link").value = `${location.origin}/room/${state.code}`;
-      $("set-rounds").value = String(state.settings.rounds);
-      $("set-mode").value = state.settings.mode;
-      $("set-clue").value = state.settings.clue || "image";
-      $("set-rounds").disabled = $("set-mode").disabled = $("set-clue").disabled = !(isHost && state.isPrivate);
+      // A matchmaking room has nobody to invite and settings the queue already
+      // decided, so it shows neither — just who it found and that it's starting.
+      $("invite-block").classList.toggle("hidden", !state.isPrivate);
+      $("host-settings").classList.toggle("hidden", !state.isPrivate);
+      if (state.isPrivate) {
+        $("share-link").value = `${location.origin}/room/${state.code}`;
+        $("set-rounds").value = String(state.settings.rounds);
+        $("set-mode").value = state.settings.mode;
+        $("set-clue").value = state.settings.clue || "image";
+        setSeconds(state.settings.guessSeconds);
+        $("set-rounds").disabled = $("set-mode").disabled = $("set-clue").disabled =
+          $("set-seconds").disabled = !isHost;
+      }
       const enoughPlayers = state.players.filter((p) => p.connected).length >= 2;
       if (!state.isPrivate) {
         $("btn-start").classList.add("hidden");
@@ -238,6 +246,21 @@
     }
   }
 
+  // The dropdown offers a fixed set of timers, but the server accepts anything
+  // from 5 to 120 — a room built with a custom GUESS_SECONDS default would
+  // otherwise show a blank select. Add whatever value the room actually has.
+  function setSeconds(seconds) {
+    const sel = $("set-seconds");
+    const value = String(seconds);
+    if (!sel.querySelector(`option[value="${value}"]`)) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = value;
+      sel.appendChild(opt);
+    }
+    sel.value = value;
+  }
+
   // ── Controls ────────────────────────────────────────────────────────────────
   function submitGuess() {
     if (submitted) return;
@@ -253,6 +276,7 @@
 
   $("btn-start").addEventListener("click", () => WG.emit("room:start"));
   $("set-rounds").addEventListener("change", (e) => WG.emit("room:settings", { rounds: e.target.value }));
+  $("set-seconds").addEventListener("change", (e) => WG.emit("room:settings", { guessSeconds: e.target.value }));
   $("set-mode").addEventListener("change", (e) => WG.emit("room:settings", { mode: e.target.value }));
   $("set-clue").addEventListener("change", (e) => WG.emit("room:settings", { clue: e.target.value }));
 

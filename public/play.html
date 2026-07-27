@@ -64,9 +64,11 @@
           <div class="players-list" id="players-list"></div>
         </div>
 
-        <!-- Lobby controls (private rooms) -->
+        <!-- Lobby controls. The invite link and the rules are private-room only:
+             a matchmaking room has nobody to invite, and its settings are fixed
+             by the queue its players chose. -->
         <div class="card lobby-box hidden" id="lobby-box">
-          <div>
+          <div id="invite-block">
             <div class="hint">Invite link</div>
             <div class="share-row">
               <input type="text" id="share-link" readonly />
@@ -78,6 +80,17 @@
               <label>Rounds</label>
               <select id="set-rounds">
                 <option>3</option><option selected>5</option><option>7</option><option>10</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Seconds per round</label>
+              <select id="set-seconds">
+                <option value="10">10 — blitz</option>
+                <option value="15">15</option>
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="45">45</option>
+                <option value="60">60 — relaxed</option>
               </select>
             </div>
             <div class="field">

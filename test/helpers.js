@@ -91,6 +91,50 @@ async function guestSession(port, name) {
   return { cookie, user };
 }
 
+// An OAuth-backed session, without OAuth. Ranked play requires an account, so
+// without this the whole ranked path — matchmaking, Elo writes, the profile —
+// is only reachable in production.
+//
+// Nothing here forges a cookie: the session is minted by the real server (so it
+// is genuinely signed by it) and then promoted from guest to account by writing
+// `passport.user` into the stored session, which is exactly what the OAuth
+// callback does. Every request after that is the ordinary authenticated path.
+//
+// `ratings` seeds ladder standings, e.g. { "image:party": { rating: 1400, games: 20 } }.
+function accountSession(port, name, { ratings = {} } = {}) {
+  // Required lazily: the caller must set DATA_DIR before the server's config is
+  // read, and requiring this at module load would freeze it too early.
+  const { db, upsertOAuthUser } = require("../server/db");
+
+  const user = upsertOAuthUser({
+    provider: "test",
+    providerId: `${name}-${Math.random().toString(36).slice(2)}`,
+    displayName: name,
+  });
+  for (const [mode, r] of Object.entries(ratings)) {
+    db.prepare(
+      `INSERT INTO ratings (user_id, mode, rating, games_played, wins, losses, draws)
+       VALUES (?, ?, ?, ?, 0, 0, 0)
+       ON CONFLICT(user_id, mode) DO UPDATE SET rating = excluded.rating, games_played = excluded.games_played`
+    ).run(user.id, mode, r.rating, r.games == null ? 25 : r.games);
+  }
+
+  return postJson(port, "/auth/guest", { name }).then((res) => {
+    const cookie = (res.headers["set-cookie"] || []).map((c) => c.split(";")[0]).join("; ");
+    // The cookie is "connect.sid=s:<sid>.<signature>", URL-encoded.
+    const raw = decodeURIComponent(/connect\.sid=([^;]+)/.exec(cookie)[1]);
+    const sid = raw.slice(2, raw.lastIndexOf("."));
+
+    const row = db.prepare("SELECT sess FROM sessions WHERE sid = ?").get(sid);
+    const sess = JSON.parse(row.sess);
+    delete sess.guest;
+    sess.passport = { user: user.id };
+    db.prepare("UPDATE sessions SET sess = ? WHERE sid = ?").run(JSON.stringify(sess), sid);
+
+    return { cookie, user, id: `u${user.id}` };
+  });
+}
+
 function connect(port, cookie) {
   // forceNew so each client is its own connection (socket.io-client caches by URL).
   return ioClient(`http://localhost:${port}`, {
@@ -119,4 +163,6 @@ function waitFor(sock, event, pred, ms = 8000) {
 }
 
 // postJson exposed so tests can drive endpoints directly (e.g. rate limits).
-module.exports = { tempDataDir, startTestServer, guestSession, connect, once, waitFor, get, postJson };
+module.exports = {
+  tempDataDir, startTestServer, guestSession, accountSession, connect, once, waitFor, get, postJson,
+};

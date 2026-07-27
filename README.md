@@ -39,6 +39,9 @@ the code in the other to try a full multiplayer round.
 | `LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`silent`. JSON logs on stdout. Default `info`. |
 | `RATE_LIMIT_AUTH` / `RATE_LIMIT_API` / `RATE_WINDOW_MS` | Per-IP HTTP rate limits. |
 | `MAX_SOCKETS_PER_IDENTITY` | Simultaneous socket connections one identity may hold (default 6). Socket rate limits are per socket, so this is what caps them per player. |
+| `MM_START_WINDOW` / `MM_GROWTH_PER_SEC` / `MM_MAX_WINDOW` | Ranked search window: how close an opponent must be, and how fast that loosens while you wait. |
+| `MM_PROVISIONAL_BONUS` / `MM_PROVISIONAL_GAMES` | Extra search width for players whose rating isn't settled yet. |
+| `MM_TICK_MS` / `MM_RANKED_TIMEOUT_MS` | How often ranked queues re-sweep; how long before a fruitless search gives up. |
 | `INACTIVE_PURGE_MONTHS` / `INACTIVE_PURGE_INTERVAL_MS` / `INACTIVE_PURGE` | Automatic deletion of dormant accounts. Keep the months in step with `public/privacy.html`. |
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
@@ -46,7 +49,7 @@ the code in the other to try a full multiplayer round.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Discord OAuth. Redirect URI: `{BASE_URL}/auth/discord/callback`. |
 | `ADSENSE_CLIENT` / `ADSENSE_SLOT` | Google AdSense publisher + slot IDs. Leave blank to hide ads. |
-| `ROUNDS_PER_GAME` / `GUESS_SECONDS` | Gameplay tuning. |
+| `ROUNDS_PER_GAME` / `GUESS_SECONDS` | Gameplay defaults. Private-room hosts can override both in the lobby (`GUESS_SECONDS` within 5–120); matchmaking rooms always use these. |
 
 **Guests vs. accounts:** the site runs with zero OAuth configured — players just
 pick a guest name and can play casual + private rooms. **Ranked** requires a
@@ -114,6 +117,9 @@ Runs the suite with Node's built-in test runner (no extra framework). Coverage:
 - **`matchmaking.test.js`** — two distinct players match into one room, ranked
   rejects guests, and leaving the queue cancels a pending match. (Guards the
   queue-pairing regression directly.)
+- **`ranked.test.js`** — the Elo pairing rule (widening windows, mutual
+  acceptance, closest-pair selection) and the whole ranked path end to end:
+  queue, pair, play, and the rating write landing on the right ladder.
 - **`game.test.js`** — a full private game runs every round through to game over,
   and submitting early ends a round without waiting out the timer.
 - **`hardening.test.js`** — the production wrapper: `/healthz`, security headers,
@@ -152,6 +158,48 @@ tier (`/api/leaderboard?clue=&tier=`). Matchmaking queues are split by
 kind × clue × tier, so you only ever match someone who chose the same thing.
 Ladder keys are built in `server/ladders.js`.
 
+## Matchmaking
+
+**Ranked pairs on rating** (`server/matchmaking.js`). Each waiting player has a
+search window that starts at ±`MM_START_WINDOW` and widens by
+`MM_GROWTH_PER_SEC` for every second they wait, capped at `MM_MAX_WINDOW`. With
+the defaults that's ±100 the moment you queue, ±500 after 20 seconds, and
+effectively anyone after about 70 — a tight ladder when there's a crowd, and a
+game rather than an empty screen when there isn't.
+
+Two rules make it fair rather than merely fast:
+
+- **Mutual acceptance.** A pair forms only when each player is inside the
+  *other's* window. Without this, someone who has waited two minutes would drag
+  a player who just arrived into a lopsided game they never agreed to.
+- **Closest pair first.** Each sweep picks the tightest legal pairing in the
+  queue, not the first one it stumbles on. The scan is O(n²), which is the right
+  call for queues that hold a handful of players per ladder.
+
+A player whose rating has fewer than `MM_PROVISIONAL_GAMES` games behind it
+searches `MM_PROVISIONAL_BONUS` points wider from the start — that number is
+still a guess, and pinning it to a tight window just makes them wait.
+
+Because windows widen over time, one shared timer re-sweeps the ranked queues
+every `MM_TICK_MS`. It exists only while somebody is waiting, so an idle server
+does no matchmaking work at all. After `MM_RANKED_TIMEOUT_MS` a fruitless search
+gives up and says so instead of spinning forever, and clients get a `queue:status`
+tick showing the current range so the wait is legible. Each match logs a
+`ranked_matched` line with both ratings, the gap and both wait times — that's
+what to tune the windows from once real players are queuing.
+
+**Casual stays first-come-first-served**, and fills with a practice bot if
+nobody shows up within a few seconds. It promises an instant game with no rating
+at stake, and guests — who have no rating to match on — play it. Ranked never
+bot-fills: a rating has to be won against a person.
+
+A matchmaking room's settings are **fixed by the queue its players joined** —
+its lobby shows neither an invite link nor the rules, and the server rejects any
+attempt to change them. For ranked that is a correctness rule, not tidiness: the
+clue and tier decide which ladder the Elo is written to, so an edit during the
+pre-match countdown would be a way onto a ladder the player never queued for.
+Private rooms remain fully configurable by their host.
+
 ## How scoring works
 
 Each guess earns the higher of two **accuracy** scores:
@@ -178,6 +226,7 @@ server/
   db.js             SQLite schema + queries (users, matches)
   auth.js           Passport Google/Discord OAuth + guest identity
   elo.js            Elo rating math + tiers
+  matchmaking.js    Pure ranked pairing rule (search windows, closest pair)
   rooms.js          Room engine (round loop) + matchmaking manager
   socket.js         Socket.IO event wiring
   game/

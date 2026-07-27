@@ -37,6 +37,7 @@
         document.querySelector(".mode-grid").after(banner);
       }
       banner.innerHTML = `<p>${label}… <span class="muted">waiting for an opponent</span></p>
+        <p class="hint" id="queue-status"></p>
         <button class="ghost small" id="btn-cancel-queue" style="margin-top:0.6rem">Cancel</button>`;
       banner.querySelector("#btn-cancel-queue").addEventListener("click", () => {
         WG.emit("queue:leave");
@@ -46,6 +47,28 @@
       banner.remove();
     }
   }
+
+  // Ranked search widens the longer you wait, so say so — an unexplained wait
+  // reads as broken, whereas a widening range reads as looking harder.
+  function renderQueueStatus(s) {
+    const el = document.getElementById("queue-status");
+    if (!el || !s || s.window == null) return;
+    const secs = Math.round((s.waitedMs || 0) / 1000);
+    const lo = Math.max(0, s.rating - s.window);
+    const hi = s.rating + s.window;
+    el.textContent =
+      `Searching ${lo}–${hi} (your rating ${s.rating}${s.provisional ? ", provisional" : ""})` +
+      ` · ${secs}s · the range widens as you wait`;
+  }
+
+  WG.on("queue:waiting", renderQueueStatus);
+  WG.on("queue:status", renderQueueStatus);
+
+  WG.on("queue:timeout", ({ waitedMs }) => {
+    setQueueUi(false);
+    const mins = Math.max(1, Math.round((waitedMs || 0) / 60000));
+    WG.toast(`No ranked opponent found after ${mins} min — try casual, or a private room with friends.`);
+  });
 
   document.getElementById("btn-ranked").addEventListener("click", async () => {
     const user = await WG.ensureUser({ rankedRequired: true });

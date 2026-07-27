@@ -169,6 +169,96 @@ test("joining a room takes you out of the queue, but a failed join does not", as
   s2.close();
 });
 
+test("a private room's host can change the round timer, and it governs the round", async () => {
+  const a = await guestSession(ctx.port, "Ivo");
+  const b = await guestSession(ctx.port, "Jem");
+  const sa = connect(ctx.port, a.cookie);
+  const sb = connect(ctx.port, b.cookie);
+  await Promise.all([once(sa, "me"), once(sb, "me")]);
+
+  const joined = once(sa, "room:joined");
+  sa.emit("room:create", { rounds: 1, mode: "party", clue: "image" });
+  const { code } = await joined;
+  sb.emit("room:join", { code });
+  await once(sb, "room:joined");
+
+  const room = ctx.manager.rooms.get(code);
+  assert.equal(room.settings.guessSeconds, 2, "starts at the server default");
+
+  const applied = waitFor(sa, "room:state", (s) => s.settings.guessSeconds === 8, 5000);
+  sa.emit("room:settings", { guessSeconds: 8 });
+  await applied;
+
+  // Out-of-range values clamp rather than being taken literally — a zero-second
+  // or hour-long round is not a setting, it is a broken game.
+  sa.emit("room:settings", { guessSeconds: 999 });
+  await waitFor(sa, "room:state", (s) => s.settings.guessSeconds === 120, 5000);
+  sa.emit("room:settings", { guessSeconds: 1 });
+  await waitFor(sa, "room:state", (s) => s.settings.guessSeconds === 5, 5000);
+
+  // And the round actually runs to the room's timer, not the server default.
+  sa.emit("room:settings", { guessSeconds: 6 });
+  await waitFor(sa, "room:state", (s) => s.settings.guessSeconds === 6, 5000);
+  const started = once(sa, "round:start", 15000);
+  sa.emit("room:start");
+  const r = await started;
+  const window = r.endsAt - Date.now();
+  assert.ok(window > 4500 && window <= 6000, `round window ~6s, got ${window}ms`);
+
+  sa.close();
+  sb.close();
+});
+
+test("a guest who is not the host cannot change a private room's settings", async () => {
+  const a = await guestSession(ctx.port, "Kai");
+  const b = await guestSession(ctx.port, "Lux");
+  const sa = connect(ctx.port, a.cookie);
+  const sb = connect(ctx.port, b.cookie);
+  await Promise.all([once(sa, "me"), once(sb, "me")]);
+
+  const joined = once(sa, "room:joined");
+  sa.emit("room:create", { rounds: 1, mode: "party", clue: "image" });
+  const { code } = await joined;
+  sb.emit("room:join", { code });
+  await once(sb, "room:joined");
+
+  sb.emit("room:settings", { guessSeconds: 60 });
+  const err = await once(sb, "room:error", 5000);
+  assert.match(err.message, /only the host/i);
+  assert.equal(ctx.manager.rooms.get(code).settings.guessSeconds, 2, "unchanged");
+
+  sa.close();
+  sb.close();
+});
+
+test("a matchmaking room's settings cannot be edited by its players", async () => {
+  // They come from the queue both players chose. For ranked they also decide
+  // which ladder the Elo lands on, so an edit during the pre-match countdown
+  // would be a way onto a ladder the player never queued for.
+  const a = await guestSession(ctx.port, "Mio");
+  const b = await guestSession(ctx.port, "Noa");
+  const sa = connect(ctx.port, a.cookie);
+  const sb = connect(ctx.port, b.cookie);
+  await Promise.all([once(sa, "me"), once(sb, "me")]);
+
+  const found = Promise.all([once(sa, "match:found", 15000), once(sb, "match:found", 15000)]);
+  sa.emit("queue:join", { ranked: false, clue: "image", tier: "party" });
+  sb.emit("queue:join", { ranked: false, clue: "image", tier: "party" });
+  const [{ code }] = await found;
+
+  sa.emit("room:settings", { clue: "text", mode: "chaos", guessSeconds: 90 });
+  const err = await once(sa, "room:error", 5000);
+  assert.match(err.message, /fixed/i);
+
+  const room = ctx.manager.rooms.get(code);
+  assert.equal(room.settings.clue, "image", "clue unchanged");
+  assert.equal(room.settings.mode, "party", "tier — and so the ladder — unchanged");
+  assert.equal(room.settings.guessSeconds, 2, "timer unchanged");
+
+  sa.close();
+  sb.close();
+});
+
 test("an identity cannot hold more sockets than its cap", async () => {
   // The per-event token buckets are per socket, so without a cap an identity
   // multiplies every rate limit by simply opening more connections — and

@@ -99,7 +99,11 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       const kind = ranked ? "ranked" : "casual";
       const res = manager.enqueue(kind, clue, tier, u, socket);
       if (res.error) return socket.emit("room:error", { message: res.error });
-      socket.emit("queue:waiting", { kind, clue, tier: res.tier, position: res.position });
+      // For ranked this also carries the starting search window and the rating
+      // being matched on, so the client can show what it is looking for from
+      // the first frame rather than waiting for the first queue:status tick.
+      const { ok, error, ...status } = res;
+      socket.emit("queue:waiting", { kind, clue, ...status });
     });
 
     socket.on("queue:leave", () => {
