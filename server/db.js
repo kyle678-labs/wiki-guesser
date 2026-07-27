@@ -9,7 +9,7 @@ const { LADDERS } = require("./ladders");
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 
-const db = new Database(path.join(config.dataDir, "wikiguessr.sqlite"));
+const db = new Database(path.join(config.dataDir, "wiki-guesser.sqlite"));
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 

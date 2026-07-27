@@ -5,7 +5,7 @@ const { textFreq, titleWords } = require("./scoring");
 const { buildClue, firstSentences } = require("./extract");
 
 const MAX_WORDS = 2;
-const UA = "WikiGuessr/0.1 (multiplayer guessing game; contact: admin@example.com)";
+const UA = "wiki-guesser/0.1 (multiplayer guessing game; contact: admin@example.com)";
 
 async function wikiFetch(url) {
   return fetch(url, { headers: { "Api-User-Agent": UA, Accept: "application/json" } });

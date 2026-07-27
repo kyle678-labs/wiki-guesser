@@ -1,4 +1,4 @@
-# WikiGuessr — Design & Specs
+# Wiki-Guesser — Design & Specs
 
 Architecture and current specifications. For setup/usage see [README.md](README.md).
 
@@ -50,7 +50,7 @@ scripts/
   build-mysteries.js          builds the offline pool from Wikimedia dumps
   migrate-ratings-to-tiers.js one-off ratings migration to ladder keys
 data/
-  wikiguessr.sqlite       users / ratings / matches / sessions
+  wiki-guesser.sqlite       users / ratings / matches / sessions
   mysteries*.sqlite        the offline mystery pool (see below)
 ```
 

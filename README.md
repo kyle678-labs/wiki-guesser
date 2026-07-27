@@ -1,4 +1,4 @@
-# 🧠 WikiGuessr
+# 🧠 Wiki-Guesser
 
 A standalone, multiplayer version of the Wikipedia image-guessing game. A mystery
 Wikipedia image appears; players race to name the topic — or fish scoring words
@@ -156,7 +156,7 @@ public/
    and `BASE_URL=https://your-domain.com`.
 3. Run behind a reverse proxy (nginx/Caddy) terminating TLS and forwarding to
    `PORT`. WebSocket upgrade headers must be passed through.
-4. Keep it alive with a process manager (`pm2 start server/index.js --name wikiguessr`
+4. Keep it alive with a process manager (`pm2 start server/index.js --name wiki-guesser`
    or a systemd unit). Send **SIGTERM** to restart: the server tells connected
    players it's restarting, drains in-flight games, and exits within
    `SHUTDOWN_GRACE_MS`. A `SIGKILL` drops every game mid-round.

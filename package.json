@@ -1,5 +1,5 @@
 {
-  "name": "wikiguessr",
+  "name": "wiki-guesser",
   "version": "0.1.0",
   "private": true,
   "description": "Multiplayer Wikipedia image-guessing game — ranked matchmaking and private rooms.",

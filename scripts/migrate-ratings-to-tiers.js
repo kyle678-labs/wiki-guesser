@@ -25,7 +25,7 @@ const { MODES } = require("../server/modes");
 const { ladderKey } = require("../server/ladders");
 const { normalizeTier } = require("../server/tiers");
 
-const dbPath = path.join(config.dataDir, "wikiguessr.sqlite");
+const dbPath = path.join(config.dataDir, "wiki-guesser.sqlite");
 
 // Legacy rows are the ones whose `mode` has no ":" — new ladder keys all do.
 function runMigration({ tier = "chaos", dryRun = false, backup = true, log = console.log } = {}) {

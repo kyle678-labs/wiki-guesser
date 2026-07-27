@@ -60,7 +60,7 @@ function get(port, urlPath, cookie) {
 }
 
 function tempDataDir() {
-  const dir = path.join(os.tmpdir(), "wikiguessr-test-" + crypto.randomBytes(6).toString("hex"));
+  const dir = path.join(os.tmpdir(), "wiki-guesser-test-" + crypto.randomBytes(6).toString("hex"));
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
