@@ -2,12 +2,17 @@
 
 const { RoomManager } = require("./rooms");
 const { identityFromSession } = require("./auth");
+const { SocketLimiter, DEFAULT_SOCKET_LIMITS } = require("./ratelimit");
+const log = require("./log");
 
 // Wire Socket.IO onto the server. `sessionMiddleware` is the same express-session
 // instance used by HTTP, so sockets see the logged-in (or guest) identity.
-// `opts` is forwarded to the RoomManager (e.g. an injected fetchMystery for tests).
+// `socketLimits` overrides the per-event token buckets (tests use this); the
+// remaining opts are forwarded to the RoomManager (e.g. an injected fetchMystery).
 function attachSockets(io, sessionMiddleware, opts = {}) {
-  const manager = new RoomManager(io, opts);
+  const { socketLimits, ...roomOpts } = opts;
+  const limits = socketLimits || DEFAULT_SOCKET_LIMITS;
+  const manager = new RoomManager(io, roomOpts);
 
   // Share the Express session with each socket handshake.
   io.engine.use(sessionMiddleware);
@@ -15,6 +20,20 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
   io.on("connection", (socket) => {
     const session = socket.request.session;
     const user = identityFromSession(session);
+
+    // Per-socket token buckets; garbage-collected with the socket on disconnect.
+    const limiter = new SocketLimiter(limits);
+
+    // Wrap a handler so it silently costs a token, and tells the client to back
+    // off when the bucket is empty rather than doing the work.
+    const limited = (event, handler) =>
+      socket.on(event, (...args) => {
+        if (!limiter.allow(event)) {
+          log.warn("socket_rate_limited", { event, user: socket.data.user && socket.data.user.id });
+          return socket.emit("room:error", { message: "You're doing that too fast — give it a second." });
+        }
+        handler(...args);
+      });
 
     if (!user) {
       socket.emit("need-auth");
@@ -39,7 +58,7 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     };
 
     // ── Quick match / ranked queue ────────────────────────────────────────────
-    socket.on("queue:join", ({ ranked, clue, tier } = {}) => {
+    limited("queue:join", ({ ranked, clue, tier } = {}) => {
       const u = requireUser();
       if (!u) return;
       const kind = ranked ? "ranked" : "casual";
@@ -54,7 +73,7 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     });
 
     // ── Private rooms ─────────────────────────────────────────────────────────
-    socket.on("room:create", (settings = {}) => {
+    limited("room:create", (settings = {}) => {
       const u = requireUser();
       if (!u) return;
       if (manager.roomOf(u.id)) manager.roomOf(u.id).markDisconnected(u.id);
@@ -62,7 +81,7 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       socket.emit("room:joined", { code: room.code });
     });
 
-    socket.on("room:join", ({ code } = {}) => {
+    limited("room:join", ({ code } = {}) => {
       const u = requireUser();
       if (!u) return;
       const room = manager.get(code);
@@ -81,7 +100,7 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       if (res.error) socket.emit("room:error", { message: res.error });
     });
 
-    socket.on("room:settings", (patch = {}) => {
+    limited("room:settings", (patch = {}) => {
       const u = requireUser();
       if (!u) return;
       const room = manager.roomOf(u.id);
@@ -102,13 +121,13 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     });
 
     // ── Gameplay ──────────────────────────────────────────────────────────────
-    socket.on("guess:submit", ({ text } = {}) => {
+    limited("guess:submit", ({ text } = {}) => {
       if (!socket.data.user) return;
       const room = manager.roomOf(socket.data.user.id);
       if (room) room.submitGuess(socket.data.user.id, text);
     });
 
-    socket.on("chat:send", ({ text } = {}) => {
+    limited("chat:send", ({ text } = {}) => {
       const u = socket.data.user;
       if (!u) return;
       const room = manager.roomOf(u.id);

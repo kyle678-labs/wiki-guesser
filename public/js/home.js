@@ -5,7 +5,6 @@
   WG.connect();
   WG.injectAds();
   WG.renderUserPill(document.getElementById("user-pill"));
-  loadLeaderboard();
 
   // Surface OAuth errors passed back on the query string.
   const params = new URLSearchParams(location.search);
@@ -105,6 +104,11 @@
   wireTabs("#board-clue-tabs", (tab) => { boardClue = tab.dataset.clue; });
   wireTabs("#board-tier-tabs", (tab) => { boardTier = tab.dataset.tier; });
 
+  // Must come after boardClue/boardTier are initialised: calling it earlier hits
+  // their temporal dead zone, and the catch below turns that into a permanent
+  // "couldn't load" on first paint.
+  loadLeaderboard();
+
   async function loadLeaderboard() {
     try {
       const res = await fetch(`/api/leaderboard?clue=${encodeURIComponent(boardClue)}&tier=${encodeURIComponent(boardTier)}`);
@@ -126,6 +130,8 @@
         )
         .join("");
     } catch (e) {
+      // Surfaced, not just swallowed — a silent catch here hid the bug above.
+      console.error("leaderboard failed to load", e);
       document.getElementById("board-body").innerHTML = `<tr><td colspan="5" class="muted">Couldn't load leaderboard.</td></tr>`;
     }
   }

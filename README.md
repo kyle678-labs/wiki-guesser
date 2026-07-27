@@ -34,8 +34,11 @@ the code in the other to try a full multiplayer round.
 | Variable | What it does |
 | --- | --- |
 | `PORT` / `BASE_URL` | Where the server listens / its public origin (used for OAuth callbacks + share links). |
-| `SESSION_SECRET` | Signs session cookies. Generate a long random string. |
-| `NODE_ENV` | `production` enables secure cookies (serve over HTTPS). |
+| `SESSION_SECRET` | Signs session cookies. Generate a long random string. **Required in production** — the server refuses to boot without a strong one. |
+| `NODE_ENV` | `production` enables secure cookies + HSTS (serve over HTTPS). |
+| `LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`silent`. JSON logs on stdout. Default `info`. |
+| `RATE_LIMIT_AUTH` / `RATE_LIMIT_API` / `RATE_WINDOW_MS` | Per-IP HTTP rate limits. |
+| `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Discord OAuth. Redirect URI: `{BASE_URL}/auth/discord/callback`. |
 | `ADSENSE_CLIENT` / `ADSENSE_SLOT` | Google AdSense publisher + slot IDs. Leave blank to hide ads. |
@@ -75,6 +78,10 @@ Runs the suite with Node's built-in test runner (no extra framework). Coverage:
   queue-pairing regression directly.)
 - **`game.test.js`** — a full private game runs every round through to game over,
   and submitting early ends a round without waiting out the timer.
+- **`hardening.test.js`** — the production wrapper: `/healthz`, security headers,
+  HTTP and per-socket rate limits, JSON 404s, a thrown round returning the room to
+  the lobby instead of crashing the process, graceful shutdown, and the refusal to
+  boot in production without a strong `SESSION_SECRET`.
 
 Tests boot the real server in-process on an ephemeral port. The Wikipedia fetch
 is dependency-injected (see `buildServer({ roomOptions: { fetchMystery } })` in
@@ -150,8 +157,17 @@ public/
 3. Run behind a reverse proxy (nginx/Caddy) terminating TLS and forwarding to
    `PORT`. WebSocket upgrade headers must be passed through.
 4. Keep it alive with a process manager (`pm2 start server/index.js --name wikiguessr`
-   or a systemd unit).
+   or a systemd unit). Send **SIGTERM** to restart: the server tells connected
+   players it's restarting, drains in-flight games, and exits within
+   `SHUTDOWN_GRACE_MS`. A `SIGKILL` drops every game mid-round.
 5. The SQLite database lives in `data/` — back that folder up.
+6. Point your health check at **`GET /healthz`**. It returns 200 with
+   `{ok, uptime, rooms, version}`, or 503 if the database has stopped answering —
+   a process that can't read SQLite is unhealthy even though it still accepts TCP.
+   It runs before the session middleware, so polling it costs nothing.
+
+Logs are JSON, one object per line on stdout (warn and above on stderr), which
+CloudWatch Logs Insights and friends parse without a custom pattern.
 
 ## Attribution
 

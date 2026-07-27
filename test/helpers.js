@@ -32,11 +32,30 @@ function postJson(port, urlPath, body) {
       (res) => {
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
-        res.on("end", () => resolve({ headers: res.headers, body: Buffer.concat(chunks).toString() }));
+        res.on("end", () =>
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })
+        );
       }
     );
     req.on("error", reject);
     req.end(data);
+  });
+}
+
+// GET with the same keep-alive-disabled treatment as postJson.
+function get(port, urlPath, cookie) {
+  return new Promise((resolve, reject) => {
+    const headers = { Connection: "close" };
+    if (cookie) headers.Cookie = cookie;
+    const req = http.request({ host: "localhost", port, path: urlPath, method: "GET", agent: false, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () =>
+        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })
+      );
+    });
+    req.on("error", reject);
+    req.end();
   });
 }
 
@@ -97,4 +116,5 @@ function waitFor(sock, event, pred, ms = 8000) {
   });
 }
 
-module.exports = { tempDataDir, startTestServer, guestSession, connect, once, waitFor };
+// postJson exposed so tests can drive endpoints directly (e.g. rate limits).
+module.exports = { tempDataDir, startTestServer, guestSession, connect, once, waitFor, get, postJson };

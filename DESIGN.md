@@ -37,6 +37,9 @@ server/
   rooms.js        Room engine (round loop) + matchmaking manager + bot-fill
   socket.js       Socket.IO event wiring
   bot.js          practice bot (identity, guess logic, timing)
+  log.js          structured JSON logging (one object per line, stdout/stderr)
+  ratelimit.js    token buckets for Socket.IO events
+  shutdown.js     graceful drain on SIGTERM (factored out so it's testable)
   game/
     pool.js       offline mystery source (reads the SQLite pool)
     scoring.js    pure scoring engine (naming + article-word hits)
@@ -173,6 +176,44 @@ Approx. avg points/round: skill 0.25 → ~44, **0.5 → ~60**, 1.0 → ~87.
 | `BOT_FILL` / `_MIN_MS` / `_MAX_MS` | on / 5000 / 10000 | casual bot-fill window (`BOT_FILL=false` disables) |
 | `MATCH_START_MS` | 2500 | delay from match-found to game start |
 | `BOT_SKILL` | 0.5 | practice-bot difficulty, 0…1 |
+| `LOG_LEVEL` | info | debug\|info\|warn\|error\|silent |
+| `RATE_WINDOW_MS` | 900000 | HTTP rate-limit window |
+| `RATE_LIMIT_AUTH` / `_API` | 30 / 300 | per-IP requests per window |
+| `SHUTDOWN_GRACE_MS` | 10000 | SIGTERM drain deadline |
+
+## Operational hardening
+
+The game logic assumes a cooperative client and a process that stays up; these
+are the pieces that make that assumption safe to expose to the internet.
+
+**Fail-fast config.** `SESSION_SECRET` in production must be present, not the
+in-repo placeholder, and ≥32 chars — otherwise `config.js` throws at require
+time. A crash-looping deploy is cheaper than a live one signing sessions with a
+publicly known key.
+
+**Error containment.** `nextRound()` is async but every caller is a timer or a
+socket handler, so an unhandled rejection would terminate the process and every
+concurrent game with it. `safeNextRound()` catches, logs, and parks the room back
+in its lobby. Ranked rating writes are wrapped separately: losing one ladder
+update beats killing a live server on `SQLITE_BUSY`.
+
+**Rate limits.** Two layers, because the expensive actions arrive over different
+transports. HTTP (`express-rate-limit`, per IP) covers `/auth` — `POST
+/auth/guest` mints a session and writes a row — and `/api`. Sockets use per-socket
+token buckets (`ratelimit.js`) on the events that allocate or broadcast:
+`room:create`, `room:join` (which also throttles room-code guessing), `queue:join`,
+`chat:send`, `guess:submit`, `room:settings`. Buckets die with the socket.
+
+**CSP.** `script-src 'self'` with no nonce or hash — the theme bootstrap lives in
+`public/js/theme.js` rather than inline specifically to make that possible.
+`style-src` keeps `'unsafe-inline'` for the markup's `style=""` attributes.
+`img-src` allowlists Wikimedia and the OAuth avatar CDNs. Google's ad hosts are
+added to `script-src`/`frame-src`/`img-src` **only when AdSense is configured**.
+
+**Shutdown.** SIGTERM notifies players, clears every room timer, then closes
+Socket.IO — which disconnects sockets *and* the HTTP server. Order matters:
+`server.close()` waits for open connections, and a WebSocket never ends on its
+own, so closing the HTTP server first deadlocks until the force-exit deadline.
 
 ## Deployment & capacity
 

@@ -2,6 +2,7 @@
 
 const { customAlphabet } = require("nanoid");
 const config = require("./config");
+const log = require("./log");
 const { fetchMystery } = require("./game/pool");
 const { scoreGuess, creditLabel } = require("./game/scoring");
 const { updatePair, tierFor } = require("./elo");
@@ -224,8 +225,28 @@ class Room {
     this.round = 0;
     this.history = [];
     this.usedTopics = new Set();
-    this.nextRound();
+    this.safeNextRound();
     return { ok: true };
+  }
+
+  // nextRound() is async but every caller is fire-and-forget (a socket handler or
+  // a timer), so an unhandled rejection here would take down the whole process —
+  // and with it every other game on the box. Contain the blast radius: log it,
+  // park this room back in the lobby, and let everyone else keep playing.
+  safeNextRound() {
+    this.nextRound().catch((err) => {
+      log.error("round_failed", { code: this.code, round: this.round, ranked: this.ranked, err });
+      this.clearTimers();
+      this.phase = "lobby";
+      this.answer = null;
+      this.io.to(channel(this.code)).emit("room:error", {
+        message: "Something went wrong running that round — back to the lobby.",
+      });
+      this.broadcastState();
+      // A matchmaking room has no lobby worth returning to; tear it down so the
+      // players can queue again rather than stranding them on a dead screen.
+      if (!this.isPrivate) this.dispose();
+    });
   }
 
   async nextRound() {
@@ -379,7 +400,7 @@ class Room {
     });
 
     const isLast = this.round >= this.settings.rounds;
-    this.timers.reveal = setTimeout(() => this.nextRound(), config.game.revealSeconds * 1000);
+    this.timers.reveal = setTimeout(() => this.safeNextRound(), config.game.revealSeconds * 1000);
     if (isLast) {
       // nextRound() will detect round > rounds and call finish().
     }
@@ -398,7 +419,16 @@ class Room {
       });
     }
     let ratingChanges = null;
-    if (this.ranked) ratingChanges = this.applyRanked(forfeitWinnerId);
+    // A failed rating write (SQLITE_BUSY, disk full) must not abort the game
+    // over — finish() runs inside timers and socket handlers where a throw ends
+    // the process. Losing one ladder update is the cheaper failure.
+    if (this.ranked) {
+      try {
+        ratingChanges = this.applyRanked(forfeitWinnerId);
+      } catch (err) {
+        log.error("ranked_write_failed", { code: this.code, err });
+      }
+    }
 
     this.io.to(channel(this.code)).emit("game:over", {
       standings,

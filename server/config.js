@@ -4,13 +4,28 @@ require("dotenv").config();
 const path = require("path");
 const bool = (v) => v === "true" || v === "1";
 
+const isProd = process.env.NODE_ENV === "production";
+
+// A missing SESSION_SECRET in production would silently fall back to a value
+// that is public in this repo, making every session cookie forgeable. Refuse to
+// boot instead — a crash-looping deploy is far cheaper than a live one signing
+// sessions with a known key.
+const DEV_SECRET = "dev-insecure-secret-change-me";
+const sessionSecret = process.env.SESSION_SECRET || DEV_SECRET;
+if (isProd && (sessionSecret === DEV_SECRET || sessionSecret.length < 32)) {
+  throw new Error(
+    "SESSION_SECRET must be set to a unique random string of at least 32 characters when NODE_ENV=production.\n" +
+      '  Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"'
+  );
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
-  isProd: process.env.NODE_ENV === "production",
+  isProd,
   isTest: process.env.NODE_ENV === "test",
   port: parseInt(process.env.PORT, 10) || 3000,
   baseUrl: (process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, ""),
-  sessionSecret: process.env.SESSION_SECRET || "dev-insecure-secret-change-me",
+  sessionSecret,
   // Where the SQLite database lives. Overridable so tests use a temp dir.
   dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "..", "data"),
 
@@ -79,6 +94,18 @@ const config = {
       return Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 0.5;
     })(),
   },
+
+  // HTTP rate limits, per client IP. Generous enough that no honest player will
+  // notice; low enough that nobody can mint sessions (each one writes a row) or
+  // hammer the API in a loop.
+  rateLimit: {
+    windowMs: parseInt(process.env.RATE_WINDOW_MS, 10) || 15 * 60 * 1000,
+    auth: parseInt(process.env.RATE_LIMIT_AUTH, 10) || 30, // /auth/* per window
+    api: parseInt(process.env.RATE_LIMIT_API, 10) || 300, // /api/* per window
+  },
+
+  // How long to let in-flight games finish on SIGTERM before forcing the exit.
+  shutdownGraceMs: parseInt(process.env.SHUTDOWN_GRACE_MS, 10) || 10000,
 
   // Trust the first proxy hop (nginx/caddy) so secure cookies work in prod.
   trustProxy: bool(process.env.TRUST_PROXY) || process.env.NODE_ENV === "production",
