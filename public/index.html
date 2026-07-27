@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WikiGuessr — the multiplayer Wikipedia image guessing game</title>
+<meta name="description" content="See a mystery Wikipedia image, race to guess what it is. Play ranked matches, climb the ladder, or start a private room and challenge your friends." />
+<script>(function(){try{var t=localStorage.getItem('wg-theme');if(!t)t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">WikiGuessr</div>
+    <div class="nav-right">
+      <button class="theme-toggle" data-theme-toggle title="Toggle theme">Theme</button>
+      <span class="nav-right" id="user-pill"></span>
+    </div>
+  </nav>
+
+  <div class="container">
+    <header class="hero">
+      <h1>Guess the Wikipedia article</h1>
+      <p class="tagline">A mystery image appears, pulled live from an article. First to name it — or fish the right words from its text — wins the round.</p>
+    </header>
+
+    <!-- Ad: top leaderboard -->
+    <div class="ad-slot" data-ad="top">Ad space — configure AdSense in .env to enable</div>
+
+    <div class="mode-grid">
+      <div class="card mode-card">
+        <h2>Ranked match</h2>
+        <p>Get matched 1-on-1 against a similarly-rated player. Win to climb the Elo ladder and rank up your tier.</p>
+        <div class="row">
+          <button class="primary" id="btn-ranked">Find ranked match</button>
+          <span class="hint">Account required</span>
+        </div>
+      </div>
+
+      <div class="card mode-card">
+        <h2>Casual quick match</h2>
+        <p>Instant random matchup, no rating on the line. Great for a warm-up — guests welcome.</p>
+        <div class="row">
+          <button class="primary" id="btn-casual">Quick match</button>
+        </div>
+      </div>
+
+      <div class="card mode-card">
+        <h2>Private room</h2>
+        <p>Create a room and share the link with up to 8 friends. You pick the rounds, the clue type (picture or description), and difficulty.</p>
+        <div class="row">
+          <button class="primary" id="btn-create">Create room</button>
+        </div>
+      </div>
+
+      <div class="card mode-card">
+        <h2>Join by code</h2>
+        <p>Got a room code from a friend? Punch it in and drop straight into their lobby.</p>
+        <div class="row share-row" style="width:100%">
+          <input type="text" id="join-code" maxlength="5" placeholder="CODE" style="text-transform:uppercase" />
+          <button class="primary" id="btn-join">Join</button>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title">How it works</h2>
+    <div class="card">
+      <ol style="margin-left:1.2rem; display:flex; flex-direction:column; gap:0.4rem;">
+        <li>Everyone gets the same clue pulled live from a Wikipedia article — either its picture or its opening description with the topic blanked out.</li>
+        <li>Type your guess before the timer runs out — it's hidden from opponents.</li>
+        <li>Naming the topic scores big. Can't name it? Any word that appears in its article still scores — the more often it appears, the more points.</li>
+        <li>Answer fast: a speed bonus is added on top of a scoring guess and decays as the timer runs down, so the quicker of two matching guesses wins the round.</li>
+        <li>Highest total after all rounds wins. In ranked, your Elo moves accordingly.</li>
+      </ol>
+    </div>
+
+    <!-- Ad: mid content -->
+    <div class="ad-slot" data-ad="mid">Ad space</div>
+
+    <h2 class="section-title">Global leaderboard</h2>
+    <div class="board-tabs" id="board-clue-tabs">
+      <button class="board-tab active" data-clue="image">Pictures</button>
+      <button class="board-tab" data-clue="text">Descriptions</button>
+      <button class="board-tab" data-clue="mixed">Combined</button>
+    </div>
+    <div class="board-tabs" id="board-tier-tabs">
+      <button class="board-tab active" data-tier="party">Party mix</button>
+      <button class="board-tab" data-tier="chaos">Total chaos</button>
+    </div>
+    <div class="card">
+      <table class="board">
+        <thead><tr><th>#</th><th>Player</th><th>Tier</th><th>Rating</th><th>W/L/D</th></tr></thead>
+        <tbody id="board-body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    <p>WikiGuessr · images &amp; text from <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a>, CC BY-SA.</p>
+    <p class="hint">A fan project — not affiliated with the Wikimedia Foundation.</p>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/home.js"></script>
+</body>
+</html>

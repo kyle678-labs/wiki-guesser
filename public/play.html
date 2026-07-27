@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WikiGuessr — game room</title>
+<meta name="robots" content="noindex" />
+<script>(function(){try{var t=localStorage.getItem('wg-theme');if(!t)t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/">WikiGuessr</a>
+    <div class="nav-right">
+      <button class="theme-toggle" data-theme-toggle title="Toggle theme">Theme</button>
+      <span id="user-pill" class="nav-right"></span>
+      <button class="ghost small" id="btn-leave">Leave</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="game-top">
+      <div>
+        <span class="round-chip" id="room-label">Room</span>
+        <span class="round-chip" id="round-label"></span>
+      </div>
+      <div class="timer" id="timer"></div>
+    </div>
+
+    <div class="stage">
+      <!-- Main column -->
+      <div>
+        <div id="image-frame"><div class="loading" id="frame-msg">Joining room…</div></div>
+
+        <!-- Guess input (during a round) -->
+        <div class="guess-area hidden" id="guess-area">
+          <input type="text" id="guess-input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your guess…" />
+          <button class="primary" id="guess-submit">Guess</button>
+        </div>
+        <p class="hint" id="guess-hint" style="margin-top:0.5rem"></p>
+
+        <!-- Reveal panel -->
+        <div class="reveal card hidden" id="reveal-panel">
+          <div class="hint">The answer was</div>
+          <div class="answer" id="reveal-answer"></div>
+          <div class="answer-desc" id="reveal-desc"></div>
+          <div class="result-list" id="reveal-results"></div>
+        </div>
+
+        <!-- Game over -->
+        <div class="reveal card hidden" id="over-panel">
+          <h2 id="over-title">Game over</h2>
+          <p class="muted" id="over-note"></p>
+          <div class="result-list" id="over-standings"></div>
+          <div id="over-recap"></div>
+          <div id="over-actions" style="margin-top:1rem; display:flex; gap:0.6rem; justify-content:center; flex-wrap:wrap;"></div>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="side">
+        <div class="card">
+          <h2 style="font-size:1.1rem; margin-bottom:0.6rem;">Players</h2>
+          <div class="players-list" id="players-list"></div>
+        </div>
+
+        <!-- Lobby controls (private rooms) -->
+        <div class="card lobby-box hidden" id="lobby-box">
+          <div>
+            <div class="hint">Invite link</div>
+            <div class="share-row">
+              <input type="text" id="share-link" readonly />
+              <button class="primary small" id="btn-copy">Copy</button>
+            </div>
+          </div>
+          <div class="settings-row" id="host-settings">
+            <div class="field">
+              <label>Rounds</label>
+              <select id="set-rounds">
+                <option>3</option><option selected>5</option><option>7</option><option>10</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Clue</label>
+              <select id="set-clue">
+                <option value="image">Pictures</option>
+                <option value="text">Descriptions</option>
+                <option value="mixed">Combined</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Difficulty</label>
+              <select id="set-mode">
+                <option value="party">Party mix — well-known topics</option>
+                <option value="chaos">Total chaos — broader, still guessable</option>
+              </select>
+            </div>
+          </div>
+          <button class="primary" id="btn-start">Start game</button>
+          <p class="hint" id="lobby-hint"></p>
+        </div>
+
+        <!-- Chat -->
+        <div class="card chat">
+          <div class="chat-log" id="chat-log"></div>
+          <div class="chat-row">
+            <input type="text" id="chat-input" maxlength="200" placeholder="Say something…" />
+            <button class="small" id="chat-send">Send</button>
+          </div>
+        </div>
+
+        <!-- Ad: sidebar -->
+        <div class="ad-slot" data-ad="side" style="min-height:250px">Ad space</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/play.js"></script>
+</body>
+</html>
