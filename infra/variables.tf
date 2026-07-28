@@ -108,6 +108,12 @@ variable "loop_lag_alarm_ms" {
   default     = 250
 }
 
+variable "chat_report_alarm_threshold" {
+  description = "Player chat reports in a 5-minute window before alerting. Defaults to 1 — at launch scale you want to see every one, because a report is the only signal you get that someone is being harassed. Raise it if the game grows enough that individual reports stop being actionable."
+  type        = number
+  default     = 1
+}
+
 variable "disk_alarm_percent" {
   description = "Disk usage percentage that triggers an alarm, on both the data and root volumes. A full data volume means failed SQLite writes on live games."
   type        = number

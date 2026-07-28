@@ -23,7 +23,7 @@ SqliteStore.prototype.startInterval = function () {
 const config = require("./config");
 const log = require("./log");
 const metrics = require("./metrics");
-const { db, getLeaderboard, getRecentMatches, deleteAccount } = require("./db");
+const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
 const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
@@ -240,6 +240,34 @@ function buildServer(overrides = {}) {
       return res.json({ user, matches: [], guest: true });
     }
     res.json({ user, guest: false, matches: getRecentMatches(user.userId, PROFILE_MATCH_LIMIT) });
+  });
+
+  // Whether this player wants to see room chat. Persisted server-side rather
+  // than in localStorage so it follows the player between devices and games,
+  // which is the whole point of a mute — someone who turned chat off because of
+  // harassment should not have it come back on the next machine they use.
+  //
+  // Lives on HTTP rather than the socket because it is reachable from the lobby
+  // (the profile panel) as well as from inside a game.
+  app.post("/api/settings/chat", express.json(), (req, res, next) => {
+    const user = getSessionUser(req);
+    if (!user) return res.status(401).json({ error: "Not signed in." });
+    if (typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be true or false." });
+    }
+    const enabled = req.body.enabled;
+
+    try {
+      if (user.userId) {
+        setChatEnabled(user.userId, enabled);
+        return res.json({ ok: true, chatEnabled: enabled });
+      }
+    } catch (err) {
+      return next(err);
+    }
+    // Guest: no account row, so it lives on the session.
+    req.session.guest.chatEnabled = enabled;
+    req.session.save((err) => (err ? next(err) : res.json({ ok: true, chatEnabled: enabled })));
   });
 
   // Self-service erasure, as promised in public/privacy.html. Irreversible and

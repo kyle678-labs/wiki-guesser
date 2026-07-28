@@ -108,18 +108,35 @@
                 <option value="chaos">Total chaos — broader, still guessable</option>
               </select>
             </div>
+            <div class="field">
+              <label>Chat</label>
+              <select id="set-chat">
+                <option value="true">On</option>
+                <option value="false">Off for everyone</option>
+              </select>
+            </div>
           </div>
           <button class="primary" id="btn-start">Start game</button>
           <p class="hint" id="lobby-hint"></p>
         </div>
 
         <!-- Chat -->
-        <div class="card chat">
-          <div class="chat-log" id="chat-log"></div>
-          <div class="chat-row">
-            <input type="text" id="chat-input" maxlength="200" placeholder="Say something…" />
-            <button class="small" id="chat-send">Send</button>
+        <div class="card chat" id="chat-card">
+          <div class="chat-head">
+            <span class="chat-title">Chat</span>
+            <button class="ghost tiny" id="chat-toggle" title="Hide chat for yourself, on every device">Hide</button>
           </div>
+          <div id="chat-body">
+            <div class="chat-log" id="chat-log"></div>
+            <div class="chat-row">
+              <input type="text" id="chat-input" maxlength="200" placeholder="Say something…" />
+              <button class="small" id="chat-send">Send</button>
+            </div>
+            <p class="hint chat-hint">Use the ⚑ on a message to report it.</p>
+          </div>
+          <p class="hint hidden" id="chat-hidden-note">
+            Chat is hidden. This setting follows your account, so it stays off in your next game too.
+          </p>
         </div>
 
         <!-- Ad: sidebar -->

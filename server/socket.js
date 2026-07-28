@@ -177,9 +177,41 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       if (!u) return;
       const room = manager.roomOf(u.id);
       if (!room) return;
-      const clean = String(text || "").replace(/[<>]/g, "").trim().slice(0, 200);
-      if (!clean) return;
-      io.to(`room:${room.code}`).emit("chat:msg", { name: u.name, text: clean, at: Date.now() });
+      // Sanitising, the room's chat-off setting, and the id the report path
+      // needs all live in Room.postChat so there is one definition of a message.
+      const res = room.postChat(u, text);
+      if (res.error) socket.emit("room:error", { message: res.error });
+    });
+
+    // Apply a mute to THIS live connection. Deliberately not the persistence
+    // path — that is POST /api/settings/chat, which is reachable from the lobby
+    // as well and handles accounts and guests properly. This only moves the
+    // socket in or out of the room's chat fan-out so the change takes effect
+    // without waiting for a reconnect.
+    //
+    // If this event is ever lost, the preference is still saved and the next
+    // connection derives delivery from it (see Room.addPlayer), so the failure
+    // mode is "muted, but still receiving until reconnect" — never the reverse.
+    limited("chat:mute", ({ enabled } = {}) => {
+      const u = socket.data.user;
+      if (!u) return;
+      const on = enabled !== false;
+      u.chatEnabled = on;
+      if (socket.data.identity) socket.data.identity.chatEnabled = on;
+      const room = manager.roomOf(u.id);
+      if (room) room.setChatDelivery(socket, on);
+    });
+
+    // Report a message for moderation. Only an id crosses the wire — see
+    // Room.reportChat for why the text deliberately does not.
+    limited("chat:report", ({ id } = {}) => {
+      const u = socket.data.user;
+      if (!u) return;
+      const room = manager.roomOf(u.id);
+      if (!room) return;
+      const res = room.reportChat(u, id);
+      if (res.error) return socket.emit("room:error", { message: res.error });
+      socket.emit("chat:reported", { id });
     });
 
     socket.on("disconnect", () => {

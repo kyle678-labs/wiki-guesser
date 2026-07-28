@@ -16,11 +16,28 @@ const { makeBot, botGuess, botDelayMs } = require("./bot");
 const makeCode = customAlphabet("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 5);
 const channel = (code) => `room:${code}`;
 
+// A second Socket.IO room, holding only the sockets that want chat delivered.
+// Muting is enforced here rather than by hiding messages in the browser: someone
+// who switched chat off because they were being harassed should stop RECEIVING
+// it, not merely stop seeing it. Everything else — state, rounds, scores — still
+// goes to the main channel, so a muted player is a full participant otherwise.
+const chatChannel = (code) => `room:${code}:chat`;
+
 // Bounds on a private room's guess timer. The floor is short enough for a
 // genuine speed round but long enough to read a clue and type; the ceiling
 // stops a host parking everyone else on a five-minute round.
 const MIN_GUESS_SECONDS = 5;
 const MAX_GUESS_SECONDS = 120;
+
+// How many recent chat messages a room keeps IN MEMORY. This exists solely so a
+// report can be resolved against what the server actually broadcast rather than
+// against text supplied by the reporter — without it, anyone could report a
+// message that was never sent and attribute it to whoever they liked.
+//
+// It is not history: nothing is replayed to joiners, nothing is written to disk,
+// and the buffer dies with the room. Only a message someone explicitly reports
+// ever leaves this process.
+const CHAT_HISTORY = 50;
 
 // ── A single game room ───────────────────────────────────────────────────────
 class Room {
@@ -41,6 +58,9 @@ class Room {
       // and casual rooms are built without it and so keep the server default,
       // which is what makes their speed bonuses comparable across matches.
       guessSeconds: clampInt(settings.guessSeconds, MIN_GUESS_SECONDS, MAX_GUESS_SECONDS, config.game.guessSeconds),
+      // Private-room hosts can switch chat off for everyone. Matchmaking rooms
+      // are constructed without the flag and so keep it on.
+      chatEnabled: asBool(settings.chatEnabled, true),
     };
 
     this.players = new Map(); // identityId -> player
@@ -52,6 +72,9 @@ class Room {
     this.timers = { guess: null, reveal: null, start: null, dispose: null };
     this.botTimers = new Map(); // botId -> timeout for this round's scheduled guess
     this.pendingRemoval = new Map(); // identityId -> timeout (reconnect grace)
+    this.chatLog = []; // recent messages, in memory only — see CHAT_HISTORY
+    this.chatSeq = 0; // per-room message counter; ids only need to be unique here
+    this.reported = new Set(); // "reporterId:messageId", so one report per person per message
     this.createdAt = Date.now();
   }
 
@@ -91,9 +114,20 @@ class Room {
     if (!this.hostId) this.hostId = user.id;
 
     socket.join(channel(this.code));
+    // Derived from the persisted identity, so a reconnect always re-establishes
+    // the right delivery state even if a live toggle was missed.
+    this.setChatDelivery(socket, user.chatEnabled !== false);
     this.manager.locate.set(user.id, this.code);
     this.broadcastState();
     return { ok: true };
+  }
+
+  // Whether this socket receives chat. Delivery only — the preference itself is
+  // persisted over HTTP (POST /api/settings/chat); this just applies it to a
+  // live connection.
+  setChatDelivery(socket, enabled) {
+    if (enabled) socket.join(chatChannel(this.code));
+    else socket.leave(chatChannel(this.code));
   }
 
   // Add a socket-less practice bot as a player. The round loop schedules its
@@ -515,6 +549,67 @@ class Room {
     };
   }
 
+  // ── Chat ───────────────────────────────────────────────────────────────────
+  // Sanitising here rather than at the socket keeps the room the single place
+  // that decides what a message is, which is what lets a report resolve against
+  // the exact text that was broadcast.
+  postChat(user, rawText) {
+    if (!this.settings.chatEnabled) return { error: "Chat is switched off in this room." };
+    const text = String(rawText || "").replace(/[<>]/g, "").trim().slice(0, 200);
+    if (!text) return { ok: true }; // nothing typed; not an error worth surfacing
+
+    const msg = { id: `c${++this.chatSeq}`, fromId: user.id, name: user.name, text, at: Date.now() };
+    this.chatLog.push(msg);
+    if (this.chatLog.length > CHAT_HISTORY) this.chatLog.shift();
+
+    // Note the channel: chat goes only to sockets that have not muted it. The
+    // message is still recorded in this room's buffer either way, so a report
+    // from someone who DID see it still resolves.
+    this.io.to(chatChannel(this.code)).emit("chat:msg", msg);
+    return { ok: true };
+  }
+
+  // Report a message for moderation.
+  //
+  // The reporter sends only an ID. The text, the author and the timestamp are
+  // all taken from this room's own buffer — never from the request — so a report
+  // cannot be used to fabricate a message or pin one on someone else.
+  //
+  // This is the ONLY path by which a chat message is written anywhere durable
+  // (the application log, and from there CloudWatch for its retention window).
+  // public/privacy.html documents that; keep the two in step.
+  reportChat(reporter, messageId) {
+    const msg = this.chatLog.find((m) => m.id === String(messageId || ""));
+    // The buffer is short and in-memory, so an expired or invented id is simply
+    // absent. Same answer either way — we don't confirm what does exist.
+    if (!msg) return { error: "That message is no longer available to report." };
+    if (msg.fromId === reporter.id) return { error: "You can't report your own message." };
+
+    const key = `${reporter.id}:${msg.id}`;
+    // Report twice, get the same acknowledgement, log once.
+    if (this.reported.has(key)) return { ok: true, already: true };
+    this.reported.add(key);
+
+    const author = this.players.get(msg.fromId);
+    // warn, not info: this should surface wherever errors surface. userId is
+    // included where there is one because an account is the only thing an
+    // operator can actually act on — a guest id dies with the session.
+    log.warn("chat_report", {
+      code: this.code,
+      ranked: this.ranked,
+      isPrivate: this.isPrivate,
+      reporterId: reporter.id,
+      reporterUserId: reporter.userId || null,
+      reporterName: reporter.name,
+      authorId: msg.fromId,
+      authorUserId: author ? author.userId : null,
+      authorName: msg.name,
+      sentAt: msg.at,
+      message: msg.text,
+    });
+    return { ok: true };
+  }
+
   // ── State / helpers ────────────────────────────────────────────────────────
   scoreboard() {
     return [...this.players.values()]
@@ -575,6 +670,7 @@ class Room {
     }
     if (patch.maxPlayers != null)
       this.settings.maxPlayers = clampInt(patch.maxPlayers, 2, config.game.maxPlayersPerRoom, this.settings.maxPlayers);
+    if (patch.chatEnabled != null) this.settings.chatEnabled = asBool(patch.chatEnabled, this.settings.chatEnabled);
     this.broadcastState();
     return { ok: true };
   }
@@ -604,6 +700,16 @@ function clampInt(v, min, max, dflt) {
   const n = parseInt(v, 10);
   if (Number.isNaN(n)) return dflt;
   return Math.max(min, Math.min(max, n));
+}
+
+// A toggle can arrive as a real boolean over Socket.IO or as a string from a
+// form control, and `Boolean("false")` is true — which would make a room setting
+// impossible to switch off. Anything unrecognised falls back to the default
+// rather than silently becoming false.
+function asBool(v, dflt) {
+  if (v === true || v === "true" || v === 1 || v === "1") return true;
+  if (v === false || v === "false" || v === 0 || v === "0") return false;
+  return dflt;
 }
 
 // ── Room + matchmaking manager ───────────────────────────────────────────────
@@ -953,4 +1059,4 @@ class RoomManager {
   }
 }
 
-module.exports = { Room, RoomManager, channel };
+module.exports = { Room, RoomManager, channel, chatChannel };

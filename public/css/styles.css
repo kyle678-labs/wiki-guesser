@@ -256,6 +256,33 @@ table.board { width: 100%; border-collapse: collapse; }
 .chat-log { height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
 .chat-log .msg .who { color: var(--link); font-weight: 600; }
 .chat-row { display: flex; gap: 0.5rem; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.chat-title { font-weight: 600; font-size: 0.9rem; }
+.chat-hint { margin: 0.15rem 0 0; font-size: 0.75rem; }
+button.tiny { padding: 0.15rem 0.5rem; font-size: 0.75rem; }
+
+/* The report control stays out of the way until you go looking for it — chat
+   should not read as a wall of accusation buttons. Revealed on hover, and kept
+   permanently visible once armed or on touch devices, where hover never fires. */
+.chat-log .msg { position: relative; }
+.chat-report {
+  opacity: 0;
+  padding: 0 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: opacity 0.12s ease;
+}
+.chat-log .msg:hover .chat-report,
+.chat-report:focus-visible,
+.chat-report.armed { opacity: 1; }
+.chat-report.armed { color: var(--danger, #c0392b); font-weight: 600; }
+.chat-log .msg.reported { opacity: 0.55; }
+@media (hover: none) {
+  .chat-report { opacity: 0.6; }
+}
 
 .delta-up { color: var(--green); font-weight: 700; }
 .delta-down { color: var(--red); font-weight: 700; }

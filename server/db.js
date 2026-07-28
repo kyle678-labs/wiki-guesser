@@ -68,6 +68,14 @@ function hasColumn(table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
 }
 
+// Whether this player wants to see room chat. Stored per account so it follows
+// them across devices and games rather than living in one browser's storage.
+// Guests get the same setting on their session (see auth.js) — they have no
+// account row to hang it on, which is the point of guest play.
+if (!hasColumn("users", "chat_enabled")) {
+  db.exec("ALTER TABLE users ADD COLUMN chat_enabled INTEGER NOT NULL DEFAULT 1");
+}
+
 if (!hasColumn("users", "last_seen")) {
   db.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER");
   // Existing rows would otherwise read as inactive-since-the-epoch and be swept
@@ -114,6 +122,7 @@ const stmts = {
      LIMIT ?
   `),
   touchSeen: db.prepare("UPDATE users SET last_seen = @now WHERE id = @id"),
+  setChatEnabled: db.prepare("UPDATE users SET chat_enabled = @on WHERE id = @id"),
   // A match row stores the two players as A and B in the order the room happened
   // to hold them, so every per-player figure has to be un-swapped against the
   // viewer. Doing it in SQL keeps the caller from having to know that.
@@ -269,6 +278,12 @@ function touchSeen(userId) {
   }
 }
 
+// Persist a player's "show me chat" preference. SQLite has no boolean type, so
+// it is stored as 0/1 and read back through a !== 0 comparison everywhere.
+function setChatEnabled(userId, enabled) {
+  stmts.setChatEnabled.run({ id: userId, on: enabled ? 1 : 0 });
+}
+
 // ── Profile ──────────────────────────────────────────────────────────────────
 // The player's own recent ranked games, newest first. Casual and private games
 // are not recorded at all, so this is the complete history that exists.
@@ -339,6 +354,7 @@ module.exports = {
   getLeaderboard,
   recordRankedMatch,
   touchSeen,
+  setChatEnabled,
   getRecentMatches,
   deleteAccount,
   purgeInactiveAccounts,

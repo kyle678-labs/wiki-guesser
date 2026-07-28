@@ -184,6 +184,50 @@ resource "aws_cloudwatch_metric_alarm" "loop_lag" {
   ok_actions    = local.ok_actions
 }
 
+# ── Moderation ───────────────────────────────────────────────────────────────
+# Chat is relayed in memory and never stored, so a report is the ONLY signal
+# that something went wrong between two players. Without this it would land in a
+# log nobody is reading at the time, which is the same as not having reporting
+# at all — the point of a report is that someone is being harassed right now.
+#
+# The filter counts reports; it deliberately does not extract the message text
+# into a metric. Metrics are retained for 15 months, far longer than the 30-day
+# log retention that public/privacy.html commits to for reported messages.
+
+resource "aws_cloudwatch_log_metric_filter" "chat_reports" {
+  name           = "${local.name}-chat-reports"
+  log_group_name = aws_cloudwatch_log_group.app.name
+  pattern        = "{ $.event = \"chat_report\" }"
+
+  metric_transformation {
+    name      = "ChatReports"
+    namespace = var.project
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "chat_reports" {
+  alarm_name          = "${local.name}-chat-reports"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  period              = 300
+  threshold           = var.chat_report_alarm_threshold
+  statistic           = "Sum"
+  metric_name         = aws_cloudwatch_log_metric_filter.chat_reports.metric_transformation[0].name
+  namespace           = var.project
+  alarm_description   = "A player reported a chat message. Read it in the log group: filter on event=\"chat_report\"."
+
+  # No reports is the normal state and the good one.
+  treat_missing_data = "notBreaching"
+
+  # Deliberately NO ok_actions. Everywhere else in this file the all-clear is
+  # what stops you tuning out the topic, but here "no reports for five minutes"
+  # is not news and would double the mail for every incident. The alarm falls
+  # back to OK silently, which is also what re-arms it for the next report.
+  alarm_actions = local.alarm_actions
+}
+
 # ── Liveness figures ─────────────────────────────────────────────────────────
 # Not alarmed on — deliberately, because there is no threshold that means
 # anything ("nobody is playing at 4am" is not an incident). These exist so the
@@ -466,6 +510,7 @@ resource "aws_cloudwatch_dashboard" "main" {
               aws_cloudwatch_metric_alarm.loop_lag.arn,
               aws_cloudwatch_metric_alarm.snapshot_failed.arn,
               aws_cloudwatch_metric_alarm.snapshot_missing.arn,
+              aws_cloudwatch_metric_alarm.chat_reports.arn,
             ],
             [for a in aws_cloudwatch_metric_alarm.disk : a.arn]
           )

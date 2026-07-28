@@ -36,7 +36,7 @@
       <ul>
         <li><strong>We never ask for your email address</strong> — not even when you sign in with Google or Discord.</li>
         <li><strong>We never see your password.</strong> Signing in happens on Google's or Discord's site, not ours.</li>
-        <li><strong>Chat messages are never written to disk.</strong> They pass through memory to the other players in your room and are gone.</li>
+        <li><strong>Chat messages are never written to disk — unless someone reports one.</strong> Chat passes through memory to the other players in your room and is gone. The single exception is a message a player reports to us for moderation, which we keep for a short time so we can act on it.</li>
         <li><strong>No advertising, no analytics, no tracking cookies.</strong> The only cookie we set is the one that keeps you signed in.</li>
         <li>You can play entirely as a guest, in which case we store no account for you at all.</li>
         <li><strong>You can delete your account yourself, instantly</strong>, from your profile — no email, no waiting.</li>
@@ -78,6 +78,7 @@
           <tr><td>Your display name</td><td>Shown to opponents and on the leaderboard</td></tr>
           <tr><td>Your avatar image URL</td><td>Shown next to your name</td></tr>
           <tr><td>The date you first signed in</td><td>Account housekeeping</td></tr>
+          <tr><td>Whether you have chat switched on or off</td><td>So the setting follows you between devices and games</td></tr>
         </tbody>
       </table>
       <p>
@@ -97,9 +98,24 @@
 
       <h3>Chat messages</h3>
       <p>
-        Chat is relayed in memory to the other players in your room and <strong>never written to a database or log
-        file</strong>. We keep no history of it and cannot retrieve it later. Please bear that in mind if you report
-        someone — tell us what happened, because we can't go and read it ourselves.
+        Chat is relayed in memory to the other players in your room and <strong>is not written to a database or log
+        file</strong>. We keep no general history of it and cannot go back and read a conversation.
+      </p>
+      <p>
+        <strong>Reported messages are the one exception.</strong> When a player uses the report button on a message,
+        that single message is written to our server log so a human can look at it. We record the message text, the
+        display name and account ID of whoever sent it, the display name and account ID of whoever reported it, the
+        room, and the time. Nothing else from the conversation is kept — not the messages around it, and not the
+        messages nobody reported.
+      </p>
+      <p>
+        We do this to keep the game usable: without it, a report would tell us that something happened but never what.
+        Our lawful basis is our legitimate interest in protecting players from abuse. Reported messages are deleted
+        with the rest of our server logs, on the schedule in the table below.
+      </p>
+      <p>
+        You can turn chat off for yourself at any time from your profile or from the chat panel in a game, and the host
+        of a private room can switch it off for everyone in that room.
       </p>
 
       <h3>Server logs and security data</h3>
@@ -175,6 +191,7 @@
         <tbody>
           <tr><td>Account profile, session, gameplay and ranking data</td><td><strong>Performance of a contract</strong> — you asked us to run a game for you, and we can't without it.</td></tr>
           <tr><td>Server logs, rate-limit counters</td><td><strong>Legitimate interests</strong> — keeping the service available, secure, and free of abuse. We've weighed this against your privacy and limited both what we log and how long we keep it.</td></tr>
+          <tr><td>A chat message someone reported, and who sent and reported it</td><td><strong>Legitimate interests</strong> — protecting players from abuse and harassment. Only a message a player has explicitly reported is kept, never the surrounding conversation.</td></tr>
         </tbody>
       </table>
 
@@ -187,6 +204,7 @@
           <tr><td>Rate-limit counters</td><td>Held in memory only; gone on restart</td></tr>
           <tr><td>Account profile, ratings and match history</td><td>Until you delete it — there is a button in your profile — or after 24 months of inactivity, whichever comes first. The inactivity sweep runs automatically every day.</td></tr>
           <tr><td>Chat messages</td><td>Never stored</td></tr>
+          <tr><td>A chat message someone reported</td><td>Kept in our server logs, then deleted automatically after 30 days</td></tr>
         </tbody>
       </table>
 

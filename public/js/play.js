@@ -172,13 +172,57 @@
     show("over-panel");
   });
 
-  WG.on("chat:msg", ({ name, text }) => {
+  WG.on("chat:msg", ({ id, fromId, name, text }) => {
     const log = $("chat-log");
     const div = document.createElement("div");
     div.className = "msg";
-    div.innerHTML = `<span class="who">${WG.escapeHtml(name)}:</span> ${WG.escapeHtml(text)}`;
+    if (id) div.dataset.mid = id;
+    // No reporting your own messages — the server refuses it anyway, so offering
+    // the button would only produce an error.
+    const canReport = Boolean(id) && fromId !== myId;
+    div.innerHTML =
+      `<span class="who">${WG.escapeHtml(name)}:</span> <span class="txt">${WG.escapeHtml(text)}</span>` +
+      (canReport ? ` <button class="chat-report" title="Report this message">⚑</button>` : "");
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
+  });
+
+  // Reporting is two-step for the same reason account deletion is: the first
+  // click of something that reaches a human should never be the last one. The
+  // button arms itself, and only a second click sends. Delegated, because
+  // messages are appended continuously.
+  $("chat-log").addEventListener("click", (e) => {
+    const btn = e.target.closest(".chat-report");
+    if (!btn) return;
+    const row = btn.closest(".msg");
+    if (!row) return;
+    if (btn.dataset.armed !== "1") {
+      btn.dataset.armed = "1";
+      btn.textContent = "Report?";
+      btn.classList.add("armed");
+      // Disarm if they don't follow through, so it can't be clicked by accident
+      // much later.
+      setTimeout(() => {
+        if (btn.dataset.armed !== "1") return;
+        delete btn.dataset.armed;
+        btn.textContent = "⚑";
+        btn.classList.remove("armed");
+      }, 4000);
+      return;
+    }
+    WG.emit("chat:report", { id: row.dataset.mid });
+    btn.disabled = true;
+    btn.textContent = "…";
+  });
+
+  WG.on("chat:reported", ({ id }) => {
+    const row = $("chat-log").querySelector(`.msg[data-mid="${window.CSS && CSS.escape ? CSS.escape(id) : id}"]`);
+    if (row) {
+      row.classList.add("reported");
+      const btn = row.querySelector(".chat-report");
+      if (btn) btn.replaceWith(document.createTextNode(" (reported)"));
+    }
+    WG.toast("Thanks — that message has been reported.");
   });
 
   WG.on("need-auth", async () => {
@@ -190,6 +234,7 @@
   function render() {
     if (!state) return;
     $("room-label").textContent = state.ranked ? "Ranked" : state.isPrivate ? `Room ${state.code}` : "Casual";
+    applyChatVisibility();
 
     // Players list
     $("players-list").innerHTML = state.players
@@ -219,9 +264,10 @@
         $("set-rounds").value = String(state.settings.rounds);
         $("set-mode").value = state.settings.mode;
         $("set-clue").value = state.settings.clue || "image";
+        $("set-chat").value = String(state.settings.chatEnabled !== false);
         setSeconds(state.settings.guessSeconds);
         $("set-rounds").disabled = $("set-mode").disabled = $("set-clue").disabled =
-          $("set-seconds").disabled = !isHost;
+          $("set-seconds").disabled = $("set-chat").disabled = !isHost;
       }
       const enoughPlayers = state.players.filter((p) => p.connected).length >= 2;
       if (!state.isPrivate) {
@@ -295,6 +341,35 @@
   }
   $("chat-send").addEventListener("click", sendChat);
   $("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+
+  // Two independent switches, and they mean different things:
+  //   • the host's room setting removes chat for EVERYONE in a private room
+  //   • the player's own toggle hides it for THEM, in every room and every game
+  // The room setting wins, because there is nothing to show when it is off.
+  function applyChatVisibility() {
+    const roomAllows = !state || state.settings.chatEnabled !== false;
+    const mine = WG.chatEnabled();
+    $("chat-card").classList.toggle("hidden", !roomAllows);
+    $("chat-body").classList.toggle("hidden", !mine);
+    $("chat-hidden-note").classList.toggle("hidden", mine);
+    $("chat-toggle").textContent = mine ? "Hide" : "Show";
+  }
+
+  $("chat-toggle").addEventListener("click", async () => {
+    const btn = $("chat-toggle");
+    btn.disabled = true;
+    await WG.setChatEnabled(!WG.chatEnabled());
+    btn.disabled = false;
+    applyChatVisibility();
+  });
+
+  $("set-chat").addEventListener("change", (e) =>
+    WG.emit("room:settings", { chatEnabled: e.target.value === "true" })
+  );
+
+  // The player's own preference is known before any room state arrives, so paint
+  // it immediately rather than leaving chat visible until the first room:state.
+  applyChatVisibility();
 
   // ── Timer ───────────────────────────────────────────────────────────────────
   function startTimer(endsAt) {

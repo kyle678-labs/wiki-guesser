@@ -173,6 +173,7 @@ worse than no alarm, because it looks like monitoring.
 | `unreachable` | Route53 can't reach `https://<domain>/healthz` for 2 min | TLS expiry, DNS, security group, EIP detached — everything between the box and a player |
 | `snapshot-failed` | A DLM snapshot returns a failure | A backup didn't happen; you're down to older snapshots |
 | `snapshot-missing` | No snapshot completes for two days | The backup policy is disabled, deleted, or its IAM role broke |
+| `chat-reports` | A player reports a chat message | Harassment or abuse, happening now — the only such signal you get |
 
 The middle three are derived from the app's own JSON log lines by CloudWatch
 metric filters, so they need no instrumentation beyond what `log.js` and
@@ -207,6 +208,14 @@ your players. Two things about them are worth knowing before they page you:
   every morning before the snapshot landed. The cost is up to ~48h to notice a
   real stoppage, which is proportionate for a backup with a 24h RPO.
 
+`chat-reports` is the only alarm here that is about people rather than machines,
+and the only one with **no `ok_actions`** — "no reports for five minutes" is not
+news, and notifying on it would double the mail for every incident. It falls back
+to OK silently, which is also what re-arms it for the next report. The filter
+counts reports and deliberately does not lift the message text into a metric:
+metrics are kept for 15 months, far longer than the 30-day retention the privacy
+policy commits to for reported messages.
+
 Memory is collected but deliberately not alarmed: on this box memory pressure
 shows up as the pool being evicted from page cache, which `event-loop-lag`
 already detects, and detects as the thing players actually feel. Likewise
@@ -232,6 +241,7 @@ Every email names the alarm. Start there:
 | `event-loop-lag` | Usually the pool falling out of page cache. `free -m`, and check whether something else is eating RAM |
 | `disk-data` / `disk-root` | `df -h`. Root is usually logs between rotations; data is the SQLite files growing |
 | `status-check-failed` | Hardware. Stop/start the instance (not reboot) to move it to new hardware |
+| `chat-reports` | Read the report — it carries the message, who sent it and who reported it: `fields @timestamp, authorName, authorUserId, reporterName, message \| filter event = "chat_report" \| sort @timestamp desc`. `authorUserId` is null for guests, who cannot be banned; an account can be deleted from the database |
 | `snapshot-failed` / `snapshot-missing` | Not urgent at 3am, but do not ignore it. Check the policy: `aws dlm get-lifecycle-policy --policy-id $(terraform output -raw dlm_policy_id)` — state should be `ENABLED`. Then confirm recent snapshots exist (command below) |
 
 Shell in with:
@@ -265,7 +275,7 @@ Rough monthly, us-east-1, on-demand:
 | Data EBS 20 GiB gp3 | 1.60 |
 | Snapshots (14 daily, incremental) | ~1–2 |
 | Elastic IP (attached) | 3.60 |
-| CloudWatch logs, metrics, 9 alarms | ~4 |
+| CloudWatch logs, metrics, 10 alarms | ~4 |
 | Route53 health check | 0.50 |
 | SNS email alerts | ~0 (first 1,000/mo free) |
 | Dashboard | 0 (first 3 free) |

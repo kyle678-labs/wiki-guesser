@@ -64,6 +64,44 @@ const WG = (() => {
     if (config) config.user = null;
   }
 
+  // ── Chat preference ──────────────────────────────────────────────────────────
+  // The source of truth is the server (the account row, or the guest's session),
+  // so muting chat follows the player to their next device and their next game
+  // rather than living in one browser. localStorage is only a mirror, so the
+  // page can render the right thing before /api/config has come back instead of
+  // flashing chat that the player has switched off.
+  const CHAT_KEY = "wg-chat";
+
+  function chatEnabled() {
+    const u = getUser();
+    if (u && typeof u.chatEnabled === "boolean") return u.chatEnabled;
+    try { return localStorage.getItem(CHAT_KEY) !== "off"; } catch (e) { return true; }
+  }
+
+  async function setChatEnabled(enabled) {
+    try { localStorage.setItem(CHAT_KEY, enabled ? "on" : "off"); } catch (e) {}
+    if (config && config.user) config.user.chatEnabled = enabled;
+    // Take effect on the open connection first. The server drops muted sockets
+    // out of the room's chat fan-out, so messages stop ARRIVING rather than just
+    // being hidden — which is what someone muting to escape harassment expects.
+    try { emit("chat:mute", { enabled }); } catch (e) {}
+    try {
+      const res = await fetch("/api/settings/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error(`chat pref ${res.status}`);
+    } catch (e) {
+      // The local mirror already applied, so the setting works for this session
+      // either way — but say so rather than implying it was saved.
+      console.error("couldn't save chat preference", e);
+      toast("Saved here, but we couldn't store that preference on your account.");
+    }
+    return enabled;
+  }
+
   // ── Auth modal ───────────────────────────────────────────────────────────────
   function showAuthModal({ rankedRequired = false } = {}) {
     return new Promise((resolve) => {
@@ -232,6 +270,11 @@ const WG = (() => {
           <p class="hint">${data.guest ? "Guest — no account is stored for you." : "Signed-in account"}</p>
         </div>
       </div>
+      <h3 class="profile-section">Preferences</h3>
+      <div class="share-row">
+        <span class="hint" style="flex:1">Show chat in games</span>
+        <button class="ghost small" id="p-chat">${chatEnabled() ? "On" : "Off"}</button>
+      </div>
       ${data.guest ? "" : `
         <h3 class="profile-section">Your ladders</h3>
         ${renderLadders(u)}
@@ -244,6 +287,14 @@ const WG = (() => {
       `}
       <button class="ghost small" id="p-close" style="margin-top:1.2rem">Close</button>`;
     modal.querySelector("#p-close").addEventListener("click", close);
+
+    const chatBtn = modal.querySelector("#p-chat");
+    chatBtn.addEventListener("click", async () => {
+      chatBtn.disabled = true;
+      const next = await setChatEnabled(!chatEnabled());
+      chatBtn.textContent = next ? "On" : "Off";
+      chatBtn.disabled = false;
+    });
 
     // Two steps, because the first click of an irreversible thing should never
     // be the last one. Both states render into the same slot.
@@ -470,6 +521,6 @@ const WG = (() => {
     loadConfig, getConfig, getUser, connect, on, emit, reconnect,
     guestLogin, logout, showAuthModal, ensureUser, renderUserPill, showProfile,
     injectAds, toast, escapeHtml, avatarHtml, initTheme, chooseMode, modeLabel,
-    chooseTier, tierLabel, ladderLabel,
+    chooseTier, tierLabel, ladderLabel, chatEnabled, setChatEnabled,
   };
 })();

@@ -53,6 +53,12 @@ class SocketLimiter {
 // buildServer({ socketLimits }) so tests can drive the limiter directly.
 const DEFAULT_SOCKET_LIMITS = {
   "chat:send": { burst: 5, perSec: 1 },
+  // Reports are cheap to send and land in the operator's logs, so an unthrottled
+  // client could bury a real report under noise. Deliberately tighter than chat:
+  // reporting is not something anyone does in a burst.
+  "chat:report": { burst: 3, perSec: 0.2 },
+  // Cheap (a room join/leave), but there is no reason to toggle it in a loop.
+  "chat:mute": { burst: 5, perSec: 1 },
   "room:create": { burst: 3, perSec: 0.1 }, // ~6/min sustained
   "room:join": { burst: 5, perSec: 0.5 }, // also throttles room-code guessing
   "queue:join": { burst: 5, perSec: 0.5 },

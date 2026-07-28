@@ -118,12 +118,25 @@ function accountIdentity(user) {
     name: user.display_name,
     avatar: user.avatar_url || null,
     ranked: true,
+    // Default ON: the column defaults to 1, and a null from a row written before
+    // the migration should also read as "chat visible".
+    chatEnabled: user.chat_enabled !== 0,
     ratings,
   };
 }
 
+// Guests have no account row, so their chat preference rides on the session
+// instead — which still survives closing the tab and rejoining a later game,
+// because the session cookie lasts 30 days.
 function guestIdentity(guest) {
-  return { kind: "guest", id: guest.id, name: guest.name, avatar: null, ranked: false };
+  return {
+    kind: "guest",
+    id: guest.id,
+    name: guest.name,
+    avatar: null,
+    ranked: false,
+    chatEnabled: guest.chatEnabled !== false,
+  };
 }
 
 // Build a unified identity straight from a session object. Works outside the
