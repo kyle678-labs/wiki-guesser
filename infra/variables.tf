@@ -84,6 +84,36 @@ variable "snapshot_retention_count" {
   default     = 14
 }
 
+# ── Alerting ─────────────────────────────────────────────────────────────────
+
+variable "alarm_email" {
+  description = "Where alarm notifications are sent. Required on purpose — there is no sensible default for 'who finds out the game is down', and an alarm with no destination is worse than no alarm because it looks like monitoring. AWS emails a confirmation link on first apply; the subscription delivers nothing until you click it."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alarm_email))
+    error_message = "alarm_email must be a single valid email address."
+  }
+}
+
+variable "error_alarm_threshold" {
+  description = "Application errors in a 5-minute window before alerting. Steady state is zero; the threshold is set above 1 so a lone transient (one failed round, one SQLITE_BUSY) doesn't page you, while a genuine fault does."
+  type        = number
+  default     = 10
+}
+
+variable "loop_lag_alarm_ms" {
+  description = "p99 event loop lag, in ms, that counts as degraded. Every mystery pick is a synchronous SQLite read, so sustained lag here means round timers are firing late and games are drifting. Measured p99 against the lean pool is ~33ms; 250 is comfortably clear of normal without waiting for players to notice."
+  type        = number
+  default     = 250
+}
+
+variable "disk_alarm_percent" {
+  description = "Disk usage percentage that triggers an alarm, on both the data and root volumes. A full data volume means failed SQLite writes on live games."
+  type        = number
+  default     = 85
+}
+
 variable "google_client_id" {
   description = "Google OAuth client ID. Leave blank to disable Google sign-in."
   type        = string

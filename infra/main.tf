@@ -441,20 +441,5 @@ resource "aws_dlm_lifecycle_policy" "data" {
 }
 
 # ── Alarms ───────────────────────────────────────────────────────────────────
-# Minimal, and deliberately so: an instance that fails its status check is the
-# one failure mode you cannot detect from inside the box.
-
-resource "aws_cloudwatch_metric_alarm" "status_check" {
-  alarm_name          = "${local.name}-status-check-failed"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 2
-  metric_name         = "StatusCheckFailed"
-  namespace           = "AWS/EC2"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 1
-  alarm_description   = "EC2 status check failing — the game is almost certainly down."
-  treat_missing_data  = "breaching"
-
-  dimensions = { InstanceId = aws_instance.app.id }
-}
+# See monitoring.tf: the SNS topic every alarm notifies, the EC2 status check,
+# and the log-derived alarms that watch the application itself.

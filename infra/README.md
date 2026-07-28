@@ -107,6 +107,46 @@ in the same AZ, stop the instance, detach the current data volume, attach the
 restored one as `/dev/sdf`, start. The bootstrap detects an existing filesystem
 and mounts it without reformatting.
 
+## Monitoring
+
+Everything in `monitoring.tf` publishes to one SNS topic, subscribed by
+`alarm_email`. That variable is **required** — an alarm with nowhere to go is
+worse than no alarm, because it looks like monitoring.
+
+> **Confirm the subscription.** AWS emails a link on the first apply and delivers
+> nothing until you click it. `terraform output next_steps` includes the command
+> to check; `PendingConfirmation` means you are not being alerted.
+
+| Alarm | Fires when | Catches |
+| --- | --- | --- |
+| `status-check-failed` | EC2 status check fails 2 min | Hardware/hypervisor loss |
+| `app-not-reporting` | No `metrics` log line for ~10 min | Process dead, restart-looping, event loop wedged, box off network |
+| `error-rate` | ≥10 `level:"error"` lines in 5 min | Failing rounds, SQLite errors, uncaught exceptions |
+| `event-loop-lag` | p99 > 250 ms for 15 min | The pool falling out of page cache — rounds drifting before players complain |
+| `disk-data` / `disk-root` | >85% used for 10 min | A full data volume means failed SQLite writes on live games |
+
+The last three are derived from the app's own JSON log lines by CloudWatch metric
+filters, so they need no instrumentation beyond what `log.js` and `metrics.js`
+already emit. `app-not-reporting` is the important one: it is the only alarm that
+treats *missing* data as breaching, which is what makes silence an alert rather
+than a blind spot.
+
+Because of exactly that, **expect `app-not-reporting` to fire on the first apply**
+and clear once the bootstrap finishes and the app logs its first metrics line.
+That is the alarm working, not a misconfiguration.
+
+**What is not covered:** every check above runs inside AWS, so a broken TLS
+certificate, a security-group mistake, or a DNS problem all look perfectly
+healthy. Let's Encrypt emails `acme_email` 20 days before expiry, which covers
+the likeliest case. For true black-box monitoring, add a Route53 health check
+against `https://<domain>/healthz` — note that its CloudWatch metrics only exist
+in **us-east-1**, so unless you deploy there it needs a second provider alias and
+a topic in that region.
+
+Memory is collected but deliberately not alarmed: on this box memory pressure
+shows up as the pool being evicted from page cache, which `event-loop-lag`
+already detects, and detects as the thing players actually feel.
+
 ## Costs
 
 Rough monthly, us-east-1, on-demand:
@@ -118,8 +158,14 @@ Rough monthly, us-east-1, on-demand:
 | Data EBS 20 GiB gp3 | 1.60 |
 | Snapshots (14 daily, incremental) | ~1–2 |
 | Elastic IP (attached) | 3.60 |
-| CloudWatch logs + metrics | ~1 |
-| **Total** | **~$34** |
+| CloudWatch logs, metrics, 6 alarms | ~3 |
+| SNS email alerts | ~0 (first 1,000/mo free) |
+| **Total** | **~$36** |
+
+Monitoring is roughly $2 of that: custom metrics are $0.30 each (three from the
+log metric filters, plus the CloudWatch agent's disk/memory rollups) and alarms
+are $0.10 each. A new account's free tier covers 10 metrics and 10 alarms for the
+first 12 months, so expect closer to $34 initially.
 
 A 1-year Compute Savings Plan takes the instance to roughly $15.40. Bandwidth is
 negligible — article images are served from Wikimedia's CDN straight to the
@@ -153,9 +199,11 @@ fields @timestamp, loopLagP99Ms, rooms, sockets, rssMb
 | sort @timestamp desc
 ```
 
-Sustained p99 above ~50 ms means rounds are starting to drift. Set the alarm
-threshold from production readings — a Windows dev box idles around 16 ms purely
-from OS timer granularity, whereas Linux idles near zero.
+Sustained p99 above ~50 ms means rounds are starting to drift. The
+`event-loop-lag` alarm ships at 250 ms (`loop_lag_alarm_ms`) to stay clear of
+false positives; tighten it once you have production readings. Note that a
+Windows dev box idles around 16 ms purely from OS timer granularity, whereas
+Linux idles near zero — so calibrate against the instance, not your laptop.
 
 ## Things this stack does not do yet
 
@@ -165,8 +213,8 @@ Named so they're decisions rather than oversights:
   replaces it. An ASG with `min=max=1` would, at the cost of a lifecycle hook to
   reattach the AZ-pinned data volume. Worth adding once the game has players who
   will notice.
-- **The alarm has no action.** Attach an SNS topic and subscribe your email —
-  two resources, and it's the difference between monitoring and being told.
+- **No external (black-box) check.** Everything is monitored from inside AWS, so
+  a TLS or DNS failure reads as healthy. See the note under Monitoring.
 - **No staging environment.** The module is parameterised, so a second workspace
   with a different `project` and `domain_name` gets you one.
 - **Ads are off.** Turning them on has compliance prerequisites — see the note in

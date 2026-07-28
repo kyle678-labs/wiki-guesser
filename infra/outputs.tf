@@ -31,6 +31,11 @@ output "oauth_callback_urls" {
   }
 }
 
+output "alerts_topic_arn" {
+  description = "SNS topic every alarm publishes to. Subscribe Slack/PagerDuty here if email isn't enough."
+  value       = aws_sns_topic.alerts.arn
+}
+
 output "next_steps" {
   description = "Ordered checklist after the first apply."
   value       = <<-EOT
@@ -43,6 +48,13 @@ output "next_steps" {
          sudo tail -f /var/log/user-data.log
     4. Verify: curl https://${var.domain_name}/healthz
     5. Register the OAuth callback URLs above with Google and Discord.
+    6. CONFIRM THE ALARM EMAIL. AWS has sent a subscription confirmation to
+       ${var.alarm_email}. Until you click the link in it, every alarm in this
+       stack fires into a topic with no confirmed subscriber and you are told
+       nothing. Check spam. Verify with:
+         aws sns list-subscriptions-by-topic --topic-arn ${aws_sns_topic.alerts.arn} \
+           --region ${var.aws_region} --query 'Subscriptions[].SubscriptionArn'
+       A value of "PendingConfirmation" means it is NOT active yet.
 
     If step 2 landed after the instance had already booted, the log shows
     "WARNING: mystery pool unavailable". The site is up; only the rounds fail.

@@ -260,9 +260,17 @@ EOF
 systemctl daemon-reload
 systemctl enable --now caddy
 
-# ── Log shipping ─────────────────────────────────────────────────────────────
+# ── Log shipping and metrics ─────────────────────────────────────────────────
 # The app already emits one JSON object per line, so CloudWatch Logs Insights
-# can query fields directly with no parser.
+# can query fields directly with no parser — and the metric filters in
+# monitoring.tf derive the heartbeat, error-rate and event-loop-lag alarms
+# straight from these lines.
+#
+# aggregation_dimensions is load-bearing, not tidiness: the agent's raw disk
+# metric also carries `device` and `fstype`, and an alarm has to name every
+# dimension exactly. The device is an unpredictable NVMe name, so the disk
+# alarms in monitoring.tf target the [InstanceId, path] rollup this produces.
+# Remove it and those alarms silently sit in INSUFFICIENT_DATA forever.
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
 {
   "agent": { "run_as_user": "root" },
@@ -289,6 +297,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
   "metrics": {
     "namespace": "$PROJECT",
     "append_dimensions": { "InstanceId": "\$${aws:InstanceId}" },
+    "aggregation_dimensions": [["InstanceId", "path"], ["InstanceId"]],
     "metrics_collected": {
       "mem": { "measurement": ["mem_used_percent"], "metrics_collection_interval": 60 },
       "disk": {

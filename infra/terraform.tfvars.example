@@ -5,6 +5,11 @@ aws_region  = "us-east-1"
 domain_name = "wiki-guesser.example.com"
 acme_email  = "you@example.com"
 
+# Required. Where alarms go — app down, error spikes, event loop lag, disk.
+# AWS emails a confirmation link on the first apply; nothing is delivered until
+# you click it.
+alarm_email = "you@example.com"
+
 # Must be cloneable without credentials. For a private repo, ship a tarball to
 # the artifacts bucket and adjust user_data instead.
 app_repo_url = "https://github.com/YOURUSER/wiki-guesser.git"
