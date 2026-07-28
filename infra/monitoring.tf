@@ -12,11 +12,8 @@
 # `metrics` every 60s, and `level: "error"` on anything that matters — so no
 # custom instrumentation is needed, only filters over what is already shipped.
 #
-# NOT covered here, deliberately: external reachability. Every check below runs
-# inside AWS, so a broken TLS certificate or a security-group mistake looks
-# healthy. Let's Encrypt emails `acme_email` 20 days before expiry, which is the
-# backstop for the likeliest case. See the note in README.md for adding a
-# Route53 health check if you want true black-box monitoring.
+# External reachability is covered too, at the bottom of this file, by a Route53
+# health check — the only probe here that sees what a player sees.
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_sns_topic" "alerts" {
@@ -41,6 +38,12 @@ locals {
   # to ignore the topic.
   alarm_actions = [aws_sns_topic.alerts.arn]
   ok_actions    = [aws_sns_topic.alerts.arn]
+
+  # The external alarm is pinned to us-east-1 and needs a topic there. When the
+  # stack already lives in us-east-1 the primary topic is in the right region
+  # and a second one would just be a second confirmation email to click.
+  needs_external_topic = var.aws_region != "us-east-1"
+  external_topic_arn   = local.needs_external_topic ? aws_sns_topic.alerts_external[0].arn : aws_sns_topic.alerts.arn
 }
 
 # ── Instance health ──────────────────────────────────────────────────────────
@@ -181,6 +184,39 @@ resource "aws_cloudwatch_metric_alarm" "loop_lag" {
   ok_actions    = local.ok_actions
 }
 
+# ── Liveness figures ─────────────────────────────────────────────────────────
+# Not alarmed on — deliberately, because there is no threshold that means
+# anything ("nobody is playing at 4am" is not an incident). These exist so the
+# dashboard can answer "is anyone playing, and was it like this yesterday",
+# which is the question you actually open a dashboard to ask, and so that a
+# sudden cliff in connections has a graph to be visible on.
+
+resource "aws_cloudwatch_log_metric_filter" "players" {
+  name           = "${local.name}-players"
+  log_group_name = aws_cloudwatch_log_group.app.name
+  pattern        = "{ $.event = \"metrics\" }"
+
+  metric_transformation {
+    name      = "PlayersOnline"
+    namespace = var.project
+    value     = "$.sockets"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "rooms" {
+  name           = "${local.name}-rooms"
+  log_group_name = aws_cloudwatch_log_group.app.name
+  pattern        = "{ $.event = \"metrics\" }"
+
+  metric_transformation {
+    name      = "RoomsActive"
+    namespace = var.project
+    value     = "$.rooms"
+    unit      = "Count"
+  }
+}
+
 # ── Disk ─────────────────────────────────────────────────────────────────────
 # Both volumes matter and for different reasons: the data volume holds the
 # SQLite databases (a full disk means failed writes on live games), and the root
@@ -215,4 +251,226 @@ resource "aws_cloudwatch_metric_alarm" "disk" {
     InstanceId = aws_instance.app.id
     path       = each.value
   }
+}
+
+# ── Backups ──────────────────────────────────────────────────────────────────
+# The DLM policy in main.tf is the ONLY copy of users, ratings and match
+# history. Until now nothing watched it, which is the same failure the alarms in
+# this file exist to prevent: a backup that silently stopped is discovered on the
+# day you need it, which is the worst possible day.
+#
+# Note the namespace: Data Lifecycle Manager publishes to AWS/EBS, NOT to an
+# AWS/DLM namespace, dimensioned on DLMPolicyId. Getting that wrong yields an
+# alarm stuck in INSUFFICIENT_DATA that looks like monitoring and is not.
+
+resource "aws_cloudwatch_metric_alarm" "snapshot_failed" {
+  alarm_name          = "${local.name}-snapshot-failed"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  period              = 3600
+  threshold           = 0
+  statistic           = "Sum"
+  metric_name         = "SnapshotsCreateFailed"
+  namespace           = "AWS/EBS"
+  alarm_description   = "A daily data volume snapshot FAILED. The player database is now protected only by older snapshots."
+
+  # Zero failures emits nothing, so silence here is the good case. Absence of
+  # snapshots entirely is a different question, and the alarm below asks it.
+  treat_missing_data = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.ok_actions
+
+  dimensions = { DLMPolicyId = aws_dlm_lifecycle_policy.data.id }
+}
+
+resource "aws_cloudwatch_metric_alarm" "snapshot_missing" {
+  alarm_name          = "${local.name}-snapshot-missing"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  statistic           = "Sum"
+  metric_name         = "SnapshotsCreateCompleted"
+  namespace           = "AWS/EBS"
+  alarm_description   = "No data volume snapshot completed in two days — backups have stopped. The policy may be disabled, deleted, or its IAM role broken."
+
+  # The failure this catches produces no metric at all (policy disabled, deleted,
+  # role revoked), so missing data IS the outage.
+  treat_missing_data = "breaching"
+
+  # 86400 is CloudWatch's maximum period, and those buckets are aligned to UTC
+  # midnight while the policy runs at 04:00 UTC. With a single evaluation period
+  # the current, still-empty bucket would trip this every morning between
+  # midnight and the snapshot. Requiring TWO consecutive empty days means a
+  # healthy yesterday always suppresses it — at the cost of up to ~48h to notice
+  # a genuine stoppage, which is proportionate for a backup whose RPO is 24h.
+  period              = 86400
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.ok_actions
+
+  dimensions = { DLMPolicyId = aws_dlm_lifecycle_policy.data.id }
+}
+
+# ── External reachability ────────────────────────────────────────────────────
+# The only black-box check in this file: Route53 health checkers hit the public
+# hostname over HTTPS from ~15 locations worldwide, exactly as a player's browser
+# would. Everything above runs inside AWS and therefore cannot see the failures
+# that live between the instance and the internet — an expired or unrenewed
+# certificate, a security-group edit, a DNS record pointed at the wrong IP, or an
+# EIP detached by a botched apply. All of those keep the process happily logging
+# its heartbeat while nobody can play.
+#
+# It probes /healthz rather than /, which means it also inherits that endpoint's
+# opinion: the app returns 503 there when SQLite stops answering, so a database
+# that has gone away registers as unreachable rather than as a 200 serving a
+# broken game.
+
+resource "aws_route53_health_check" "app" {
+  type              = "HTTPS"
+  fqdn              = var.domain_name
+  port              = 443
+  resource_path     = "/healthz"
+  request_interval  = 30 # 10 is available but adds ~$1/mo and we don't need it
+  failure_threshold = 3  # ~90s of consistent failure before it flips
+
+  # Caddy serves a certificate per hostname, so the checkers must send SNI or
+  # every probe fails the TLS handshake regardless of how healthy the app is.
+  enable_sni = true
+
+  tags = { Name = "${local.name}-external" }
+}
+
+# Health check metrics exist only in us-east-1 (see the provider note in
+# versions.tf), and an alarm can only notify a topic in its own region — hence a
+# second topic, created only when the stack itself lives somewhere else.
+resource "aws_sns_topic" "alerts_external" {
+  count    = local.needs_external_topic ? 1 : 0
+  provider = aws.us_east_1
+
+  name = "${local.name}-alerts-external"
+}
+
+resource "aws_sns_topic_subscription" "alerts_external_email" {
+  count    = local.needs_external_topic ? 1 : 0
+  provider = aws.us_east_1
+
+  topic_arn = aws_sns_topic.alerts_external[0].arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
+resource "aws_cloudwatch_metric_alarm" "external" {
+  provider = aws.us_east_1
+
+  alarm_name          = "${local.name}-unreachable"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  period              = 60
+  threshold           = 1
+  statistic           = "Minimum"
+  metric_name         = "HealthCheckStatus" # 1 = healthy, 0 = not
+  namespace           = "AWS/Route53"
+  alarm_description   = "${var.domain_name} is not reachable from the public internet over HTTPS. TLS, DNS, security group, or the app itself."
+
+  # Route53 reports continuously, so a gap here is itself a problem.
+  treat_missing_data = "breaching"
+
+  alarm_actions = [local.external_topic_arn]
+  ok_actions    = [local.external_topic_arn]
+
+  dimensions = { HealthCheckId = aws_route53_health_check.app.id }
+}
+
+# ── Dashboard ────────────────────────────────────────────────────────────────
+# One page to open when something feels wrong, or once a week when nothing does.
+# Free — CloudWatch bills dashboards only past the third.
+#
+# Ordered the way you actually read it: is anyone playing, is the loop keeping
+# up, is anything erroring, and is anything on fire. The `unreachable` alarm is
+# absent from the status widget because it lives in us-east-1; the console links
+# it from the Alarms page regardless.
+
+resource "aws_cloudwatch_dashboard" "main" {
+  dashboard_name = local.name
+
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Players online / games in progress"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = 300
+          metrics = [
+            [var.project, "PlayersOnline", { stat = "Maximum", label = "Players" }],
+            [var.project, "RoomsActive", { stat = "Maximum", label = "Rooms" }],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Event loop lag p99 (ms) — the leading indicator"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = 300
+          metrics = [
+            [var.project, "EventLoopLagP99", { stat = "Average", label = "p99 lag" }],
+          ]
+          annotations = {
+            horizontal = [{ label = "alarm threshold", value = var.loop_lag_alarm_ms }]
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Errors and heartbeat"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = 300
+          metrics = [
+            [var.project, "AppErrors", { stat = "Sum", label = "Errors" }],
+            [var.project, "AppHeartbeat", { stat = "Sum", label = "Heartbeats (5 = healthy)" }],
+          ]
+        }
+      },
+      {
+        type   = "alarm"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title = "Alarms"
+          alarms = concat(
+            [
+              aws_cloudwatch_metric_alarm.status_check.arn,
+              aws_cloudwatch_metric_alarm.heartbeat.arn,
+              aws_cloudwatch_metric_alarm.errors.arn,
+              aws_cloudwatch_metric_alarm.loop_lag.arn,
+              aws_cloudwatch_metric_alarm.snapshot_failed.arn,
+              aws_cloudwatch_metric_alarm.snapshot_missing.arn,
+            ],
+            [for a in aws_cloudwatch_metric_alarm.disk : a.arn]
+          )
+        }
+      },
+    ]
+  })
 }

@@ -36,6 +36,26 @@ output "alerts_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
+output "external_alerts_topic_arn" {
+  description = "Topic for the external-reachability alarm. Pinned to us-east-1 because Route53 health check metrics only exist there; equals alerts_topic_arn when the stack is already in us-east-1."
+  value       = local.external_topic_arn
+}
+
+output "dlm_policy_id" {
+  description = "The snapshot policy guarding the player database. Used by the snapshot alarms and by the troubleshooting commands in README.md."
+  value       = aws_dlm_lifecycle_policy.data.id
+}
+
+output "data_volume_id" {
+  description = "The EBS volume holding users, ratings and match history. This is what the snapshots are of."
+  value       = aws_ebs_volume.data.id
+}
+
+output "dashboard_url" {
+  description = "The one page to open when something feels wrong. Bookmark it."
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards/dashboard/${aws_cloudwatch_dashboard.main.dashboard_name}"
+}
+
 output "next_steps" {
   description = "Ordered checklist after the first apply."
   value       = <<-EOT
@@ -48,13 +68,20 @@ output "next_steps" {
          sudo tail -f /var/log/user-data.log
     4. Verify: curl https://${var.domain_name}/healthz
     5. Register the OAuth callback URLs above with Google and Discord.
-    6. CONFIRM THE ALARM EMAIL. AWS has sent a subscription confirmation to
-       ${var.alarm_email}. Until you click the link in it, every alarm in this
-       stack fires into a topic with no confirmed subscriber and you are told
-       nothing. Check spam. Verify with:
+    6. CONFIRM THE ALARM EMAIL${local.needs_external_topic ? "S (there are TWO)" : ""}. AWS has sent a subscription
+       confirmation to ${var.alarm_email}. Until you click the link, alarms fire
+       into a topic with no confirmed subscriber and you are told nothing.
+       Check spam. Verify with:
          aws sns list-subscriptions-by-topic --topic-arn ${aws_sns_topic.alerts.arn} \
            --region ${var.aws_region} --query 'Subscriptions[].SubscriptionArn'
-       A value of "PendingConfirmation" means it is NOT active yet.
+       "PendingConfirmation" means it is NOT active yet.
+    %{~if local.needs_external_topic}
+       A SECOND confirmation covers the external-reachability alarm, which is
+       pinned to us-east-1. Both emails must be confirmed:
+         aws sns list-subscriptions-by-topic --topic-arn ${local.external_topic_arn} \
+           --region us-east-1 --query 'Subscriptions[].SubscriptionArn'
+    %{~endif}
+    7. Bookmark the dashboard (dashboard_url output above).
 
     If step 2 landed after the instance had already booted, the log shows
     "WARNING: mystery pool unavailable". The site is up; only the rounds fail.

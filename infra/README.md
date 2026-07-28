@@ -104,8 +104,54 @@ fields @timestamp, event, method, path, status, ms
 
 **Restore the database** from a DLM snapshot: create a volume from the snapshot
 in the same AZ, stop the instance, detach the current data volume, attach the
-restored one as `/dev/sdf`, start. The bootstrap detects an existing filesystem
-and mounts it without reformatting.
+restored one as `/dev/sdf`, start.
+
+Why that is safe, since it is worth knowing before you do it under pressure:
+
+- The bootstrap only runs `mkfs` when `blkid` reports no filesystem, so a
+  restored volume is **never** reformatted.
+- `user_data` does not re-run on a stop/start — but it doesn't need to. EBS
+  snapshots preserve the filesystem UUID, so the `/etc/fstab` line written on
+  first boot still matches the restored volume and it mounts automatically.
+- The service has `RequiresMountsFor=$DATA_DIR`, so it refuses to start against a
+  missing mount rather than quietly creating a fresh, empty database on the root
+  volume.
+
+The mystery pool lives on this volume too, so a restore brings it back as well —
+and since the pool never changes, it costs nothing after the first snapshot.
+
+**Check the snapshots exist** — the two `snapshot-*` alarms do this continuously,
+but this is how you confirm by hand:
+
+```bash
+aws ec2 describe-snapshots --owner-ids self --filters "Name=volume-id,Values=$(terraform output -raw data_volume_id)" --query 'reverse(sort_by(Snapshots,&StartTime))[:5].[SnapshotId,StartTime,State]' --output table
+```
+
+You should see a snapshot per day, newest first, all `completed`.
+
+### Is the snapshot actually restorable?
+
+DLM snapshots are **crash-consistent, not quiesced**: they capture the volume
+mid-write, with SQLite's WAL part-written. That is the same as pulling the power
+cord, and it is the one property of a backup you cannot assume.
+
+```bash
+npm run drill:restore
+```
+
+The drill runs the app's real ranked-write path in separate processes, SIGKILLs
+them mid-transaction, and then verifies the database exactly as a recovering app
+would — SQLite's integrity check, foreign keys, and two invariants that hold only
+if transactions are all-or-nothing (`games_played` must equal the matches a
+player appears in; W+L+D must equal `games_played`). `integrity_check` alone
+cannot see a torn transaction; those can.
+
+It also measures two ways a hand-rolled backup goes wrong — copying the files one
+at a time from a live database, and copying the `.sqlite` without its `-wal`.
+**Both usually pass an integrity check while silently losing data**, because a
+WAL checkpoint leaves a transactionally consistent *prefix* in the main file. A
+backup that looks fine and isn't is the reason to snapshot the whole volume and
+never to hand-roll this.
 
 ## Monitoring
 
@@ -124,28 +170,89 @@ worse than no alarm, because it looks like monitoring.
 | `error-rate` | ≥10 `level:"error"` lines in 5 min | Failing rounds, SQLite errors, uncaught exceptions |
 | `event-loop-lag` | p99 > 250 ms for 15 min | The pool falling out of page cache — rounds drifting before players complain |
 | `disk-data` / `disk-root` | >85% used for 10 min | A full data volume means failed SQLite writes on live games |
+| `unreachable` | Route53 can't reach `https://<domain>/healthz` for 2 min | TLS expiry, DNS, security group, EIP detached — everything between the box and a player |
+| `snapshot-failed` | A DLM snapshot returns a failure | A backup didn't happen; you're down to older snapshots |
+| `snapshot-missing` | No snapshot completes for two days | The backup policy is disabled, deleted, or its IAM role broke |
 
-The last three are derived from the app's own JSON log lines by CloudWatch metric
-filters, so they need no instrumentation beyond what `log.js` and `metrics.js`
-already emit. `app-not-reporting` is the important one: it is the only alarm that
-treats *missing* data as breaching, which is what makes silence an alert rather
-than a blind spot.
+The middle three are derived from the app's own JSON log lines by CloudWatch
+metric filters, so they need no instrumentation beyond what `log.js` and
+`metrics.js` already emit. `app-not-reporting` is the important one: it is the
+only log-derived alarm that treats *missing* data as breaching, which is what
+makes silence an alert rather than a blind spot.
 
-Because of exactly that, **expect `app-not-reporting` to fire on the first apply**
-and clear once the bootstrap finishes and the app logs its first metrics line.
-That is the alarm working, not a misconfiguration.
+Because of exactly that, **expect `app-not-reporting` and `unreachable` to fire on
+the first apply** and clear once the bootstrap finishes, DNS resolves and Caddy
+has its certificate. That is them working, not a misconfiguration.
 
-**What is not covered:** every check above runs inside AWS, so a broken TLS
-certificate, a security-group mistake, or a DNS problem all look perfectly
-healthy. Let's Encrypt emails `acme_email` 20 days before expiry, which covers
-the likeliest case. For true black-box monitoring, add a Route53 health check
-against `https://<domain>/healthz` — note that its CloudWatch metrics only exist
-in **us-east-1**, so unless you deploy there it needs a second provider alias and
-a topic in that region.
+`unreachable` is the only black-box check — the only one that sees what a player
+sees. Note two consequences of how Route53 works:
+
+- Its metrics exist **only in us-east-1**, and an alarm can only watch metrics in
+  its own region, so that alarm and its SNS topic are pinned there. If
+  `aws_region` isn't us-east-1 you get a second topic and **a second confirmation
+  email**; both must be clicked.
+- The checkers come from ~15 AWS locations worldwide. If you ever narrow
+  `allowed_http_cidrs` (e.g. to Cloudflare's ranges), they lose access and the
+  alarm goes permanently red. Add their published ranges, or delete the check.
+
+The two snapshot alarms watch the DLM policy, which holds the **only** copy of
+your players. Two things about them are worth knowing before they page you:
+
+- DLM publishes to the **`AWS/EBS`** namespace (not `AWS/DLM`), dimensioned on
+  `DLMPolicyId`. An alarm written against the wrong namespace sits in
+  `INSUFFICIENT_DATA` forever and looks exactly like working monitoring.
+- `snapshot-missing` needs **two consecutive empty days** before it fires.
+  CloudWatch's longest period is 24h and those buckets align to UTC midnight,
+  while the policy runs at 04:00 UTC — so a single-period version would trip
+  every morning before the snapshot landed. The cost is up to ~48h to notice a
+  real stoppage, which is proportionate for a backup with a 24h RPO.
 
 Memory is collected but deliberately not alarmed: on this box memory pressure
 shows up as the pool being evicted from page cache, which `event-loop-lag`
-already detects, and detects as the thing players actually feel.
+already detects, and detects as the thing players actually feel. Likewise
+`PlayersOnline` / `RoomsActive` are graphed but never alarmed — "nobody is
+playing at 4am" is not an incident.
+
+### The dashboard
+
+`terraform output dashboard_url` — bookmark it. Four widgets: players and rooms,
+event loop lag against its alarm threshold, errors and heartbeat, and current
+alarm state. It is free (CloudWatch bills dashboards only past the third).
+
+### When an alarm arrives
+
+Every email names the alarm. Start there:
+
+| Alarm | First thing to check |
+| --- | --- |
+| `unreachable` + `app-not-reporting` | The box or the app is down. `journalctl -u wiki-guesser -n 100` |
+| `unreachable` alone | App is fine, the path to it isn't. TLS first: `curl -vI https://<domain>/healthz`, then `journalctl -u caddy -n 50` |
+| `app-not-reporting` alone | Process is dead or wedged but externally still answering (rare). Check `systemctl status wiki-guesser` for a restart loop |
+| `error-rate` | Logs Insights, filter `level="error"`, read the `event` field — it names the failure |
+| `event-loop-lag` | Usually the pool falling out of page cache. `free -m`, and check whether something else is eating RAM |
+| `disk-data` / `disk-root` | `df -h`. Root is usually logs between rotations; data is the SQLite files growing |
+| `status-check-failed` | Hardware. Stop/start the instance (not reboot) to move it to new hardware |
+| `snapshot-failed` / `snapshot-missing` | Not urgent at 3am, but do not ignore it. Check the policy: `aws dlm get-lifecycle-policy --policy-id $(terraform output -raw dlm_policy_id)` — state should be `ENABLED`. Then confirm recent snapshots exist (command below) |
+
+Shell in with:
+
+```bash
+aws ssm start-session --target $(terraform output -raw instance_id)
+```
+
+The two commands worth knowing by heart:
+
+```bash
+sudo journalctl -u wiki-guesser -n 100 --no-pager
+```
+
+```bash
+curl -s http://127.0.0.1:3000/healthz | jq
+```
+
+`/healthz` returns uptime, live room count, and the same loop-lag figures the
+alarms watch — it is the fastest "is this box healthy right now" answer, and it
+sidesteps TLS and DNS entirely because it talks to the app directly.
 
 ## Costs
 
@@ -158,14 +265,17 @@ Rough monthly, us-east-1, on-demand:
 | Data EBS 20 GiB gp3 | 1.60 |
 | Snapshots (14 daily, incremental) | ~1–2 |
 | Elastic IP (attached) | 3.60 |
-| CloudWatch logs, metrics, 6 alarms | ~3 |
+| CloudWatch logs, metrics, 9 alarms | ~4 |
+| Route53 health check | 0.50 |
 | SNS email alerts | ~0 (first 1,000/mo free) |
-| **Total** | **~$36** |
+| Dashboard | 0 (first 3 free) |
+| **Total** | **~$37** |
 
-Monitoring is roughly $2 of that: custom metrics are $0.30 each (three from the
-log metric filters, plus the CloudWatch agent's disk/memory rollups) and alarms
-are $0.10 each. A new account's free tier covers 10 metrics and 10 alarms for the
-first 12 months, so expect closer to $34 initially.
+Monitoring is roughly $3 of that: custom metrics are $0.30 each (five from the
+log metric filters, plus the CloudWatch agent's disk/memory rollups), alarms are
+$0.10 each, and the health check is $0.50 at the 30-second interval. A new
+account's free tier covers 10 metrics and 10 alarms for the first 12 months, so
+expect closer to $34 initially.
 
 A 1-year Compute Savings Plan takes the instance to roughly $15.40. Bandwidth is
 negligible — article images are served from Wikimedia's CDN straight to the
@@ -213,8 +323,6 @@ Named so they're decisions rather than oversights:
   replaces it. An ASG with `min=max=1` would, at the cost of a lifecycle hook to
   reattach the AZ-pinned data volume. Worth adding once the game has players who
   will notice.
-- **No external (black-box) check.** Everything is monitored from inside AWS, so
-  a TLS or DNS failure reads as healthy. See the note under Monitoring.
 - **No staging environment.** The module is parameterised, so a second workspace
   with a different `project` and `domain_name` gets you one.
 - **Ads are off.** Turning them on has compliance prerequisites — see the note in
