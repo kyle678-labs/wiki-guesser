@@ -17,3 +17,5 @@ data/
 *.tfvars
 !*.tfvars.example
 crash.log
+
+.claude

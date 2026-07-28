@@ -5,7 +5,7 @@ const log = require("./log");
 const { db, purgeInactiveAccounts } = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
-const { warmPartyIndex } = require("./game/pool");
+const { warmPartyIndex, warmCategoryCounts } = require("./game/pool");
 const metrics = require("./metrics");
 
 const { server, io, manager } = buildServer();
@@ -14,6 +14,9 @@ const { server, io, manager } = buildServer();
 // than in buildServer so the test suite — which injects its own mystery source
 // and has no pool on disk — never pays for it.
 warmPartyIndex();
+// Same reasoning: one grouped scan of the pool, paid before we accept traffic
+// rather than by whichever player first opens the category picker.
+warmCategoryCounts();
 
 server.listen(config.port, () => {
   const auth = [config.google.enabled && "Google", config.discord.enabled && "Discord"].filter(Boolean);

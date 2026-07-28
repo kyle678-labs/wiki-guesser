@@ -403,3 +403,47 @@ button.red:hover { background: var(--red); color: #fff; border-color: var(--red)
 .red-btn { background: var(--red); border-color: var(--red); color: #fff; }
 .red-btn:hover { background: var(--red); border-color: var(--red); color: #fff; filter: brightness(1.1); }
 .red-btn:disabled { opacity: 0.6; }
+
+/* ── Category picker (private room settings) ─────────────────────────────── */
+.cat-picker { margin-top: 0.9rem; }
+.cat-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.cat-head label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+.cat-opt {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.4rem;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: inherit; cursor: pointer;
+  font-size: 0.85rem; text-align: left;
+}
+.cat-opt:hover:not(:disabled) { border-color: var(--accent); }
+.cat-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.cat-opt:disabled { opacity: 0.55; cursor: default; }
+.cat-name { font-weight: 500; }
+/* The count is the point of this control, so it stays legible rather than
+   fading into decoration — but it must not outweigh the category name. */
+.cat-count { font-variant-numeric: tabular-nums; font-size: 0.76rem; opacity: 0.65; }
+.cat-opt.thin .cat-count { color: var(--warn, #c47b17); opacity: 1; }
+#cat-note { margin-top: 0.5rem; }
+#cat-note .warn { color: var(--warn, #c47b17); }
+
+/* ── Chat header, mute and report ────────────────────────────────────────── */
+.chat-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+.chat-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.chat-hint { margin-top: 0.35rem; opacity: 0.55; }
+.msg .chat-report {
+  border: none; background: transparent; cursor: pointer;
+  opacity: 0; padding: 0 0.2rem; font-size: 0.8rem; color: inherit;
+}
+.msg:hover .chat-report, .msg .chat-report:focus-visible, .msg .chat-report.armed { opacity: 0.75; }
+.msg .chat-report.armed { color: var(--warn, #c47b17); opacity: 1; font-size: 0.72rem; }
+.msg.reported { opacity: 0.6; }
+button.tiny { font-size: 0.72rem; padding: 0.15rem 0.45rem; }
+/* Selected categories carry a check as well as the accent border, so the state
+   does not depend on colour alone. */
+.cat-opt.on .cat-name::before { content: "✓ "; }

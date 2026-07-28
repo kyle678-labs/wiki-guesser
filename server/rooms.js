@@ -11,6 +11,7 @@ const { recordRankedMatch, getRating } = require("./db");
 const { normalizeMode } = require("./modes");
 const { normalizeTier } = require("./tiers");
 const { ladderKey } = require("./ladders");
+const { normalizeCategories } = require("./game/categories");
 const { makeBot, botGuess, botDelayMs } = require("./bot");
 
 const makeCode = customAlphabet("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 5);
@@ -61,6 +62,10 @@ class Room {
       // Private-room hosts can switch chat off for everyone. Matchmaking rooms
       // are constructed without the flag and so keep it on.
       chatEnabled: asBool(settings.chatEnabled, true),
+      // Article categories to draw from. Empty = anything, which is the default
+      // and what every matchmaking room uses: ranked ladders have to be
+      // comparable, so the pool cannot vary per match.
+      categories: normalizeCategories(settings.categories),
     };
 
     this.players = new Map(); // identityId -> player
@@ -312,12 +317,22 @@ class Room {
 
     let mystery;
     try {
-      mystery = await this.manager.fetchMystery(this.settings.mode, this.usedTopics, this.roundClue);
+      mystery = await this.manager.fetchMystery(
+        this.settings.mode,
+        this.usedTopics,
+        this.roundClue,
+        this.settings.categories
+      );
     } catch (err) {
       this.io.to(channel(this.code)).emit("room:error", { message: "Couldn't load a mystery — retrying…" });
       // one more attempt, then bail to lobby
       try {
-        mystery = await this.manager.fetchMystery(this.settings.mode, this.usedTopics, this.roundClue);
+        mystery = await this.manager.fetchMystery(
+          this.settings.mode,
+          this.usedTopics,
+          this.roundClue,
+          this.settings.categories
+        );
       } catch {
         this.phase = "lobby";
         this.broadcastState();
@@ -671,6 +686,7 @@ class Room {
     if (patch.maxPlayers != null)
       this.settings.maxPlayers = clampInt(patch.maxPlayers, 2, config.game.maxPlayersPerRoom, this.settings.maxPlayers);
     if (patch.chatEnabled != null) this.settings.chatEnabled = asBool(patch.chatEnabled, this.settings.chatEnabled);
+    if (patch.categories != null) this.settings.categories = normalizeCategories(patch.categories);
     this.broadcastState();
     return { ok: true };
   }

@@ -39,6 +39,9 @@ const Database = require("better-sqlite3");
 // Reuse the game's own frequency logic so stored freq keys (stemmed, stopword-
 // filtered) match exactly what scoreGuess() looks up at runtime.
 const { textFreq } = require("../server/game/scoring");
+// Classification is shared with the runtime so the bits written here and the
+// bits filtered on at pick time can never drift apart.
+const { classify, CATEGORIES, CATEGORY_LABELS, BIT } = require("../server/game/categories");
 // For the --max-pool default (the chaos-tier popularity floor).
 const config = require("../server/config");
 
@@ -102,6 +105,7 @@ db.exec(`
     incoming_links INTEGER NOT NULL DEFAULT 0,
     popularity     REAL NOT NULL DEFAULT 0,
     word_count     INTEGER NOT NULL,
+    categories     INTEGER NOT NULL DEFAULT 0,  -- bitmask; see server/game/categories.js
     rnd            REAL NOT NULL   -- random [0,1) per row → fast random picks (see pool.js)
   );
 `);
@@ -197,8 +201,8 @@ async function buildMysteries() {
   const findImage = db.prepare("SELECT name FROM page_images WHERE page_id = ?");
   const insert = db.prepare(`
     INSERT OR IGNORE INTO mysteries
-      (page_id, title, image_name, image_url, opening_text, freq_json, incoming_links, popularity, word_count, rnd)
-    VALUES (@page_id, @title, @image_name, @image_url, @opening_text, @freq_json, @incoming_links, @popularity, @word_count, @rnd)
+      (page_id, title, image_name, image_url, opening_text, freq_json, incoming_links, popularity, word_count, categories, rnd)
+    VALUES (@page_id, @title, @image_name, @image_url, @opening_text, @freq_json, @incoming_links, @popularity, @word_count, @categories, @rnd)
   `);
 
   let pendingId = null;
@@ -266,6 +270,8 @@ async function buildMysteries() {
       incoming_links: Number(doc.incoming_links) || 0,
       popularity,
       word_count: words.length,
+      // Cheap: both arrays are already parsed as part of the doc.
+      categories: classify(doc.template, doc.category),
       rnd: Math.random(),
     });
     kept++;
@@ -289,12 +295,45 @@ function finalize() {
     CREATE INDEX idx_img_rnd ON mysteries(rnd) WHERE image_url IS NOT NULL;
     CREATE INDEX idx_txt_rnd ON mysteries(rnd) WHERE opening_text IS NOT NULL;
   `);
+
+  // One partial index per (category × clue). Without these a category-filtered
+  // pick degrades from an index walk into a scan of the whole pool testing
+  // `categories & bit` row by row — and because better-sqlite3 is synchronous,
+  // that scan blocks the event loop for every room on the box. Each index only
+  // contains the rows that match, so the set costs far less than 24 full indexes.
+  const catIndexes = [];
+  for (const c of CATEGORIES) {
+    catIndexes.push(
+      `CREATE INDEX idx_cat_${c}_img ON mysteries(rnd) WHERE (categories & ${BIT[c]}) != 0 AND image_url IS NOT NULL;`,
+      `CREATE INDEX idx_cat_${c}_txt ON mysteries(rnd) WHERE (categories & ${BIT[c]}) != 0 AND opening_text IS NOT NULL;`
+    );
+  }
+  console.log(`  building ${catIndexes.length} category indexes…`);
+  db.exec(catIndexes.join("\n"));
+
   db.exec("VACUUM;");
 
   const total = db.prepare("SELECT COUNT(*) c FROM mysteries").get().c;
   const withImg = db.prepare("SELECT COUNT(*) c FROM mysteries WHERE image_url IS NOT NULL").get().c;
   const withText = db.prepare("SELECT COUNT(*) c FROM mysteries WHERE opening_text IS NOT NULL").get().c;
   console.log(`\n  Pool: ${total.toLocaleString()} mysteries  (${withImg.toLocaleString()} with image, ${withText.toLocaleString()} with text)`);
+
+  // Per-category counts at both tiers. Printed because a category that is thin
+  // at the party floor is a real product problem — it is exactly the number the
+  // private-room picker shows players, and the reason it nudges them to chaos.
+  const party = config.tierMinPopularity.party;
+  const uncategorised = db.prepare("SELECT COUNT(*) c FROM mysteries WHERE categories = 0").get().c;
+  console.log(
+    `\n  Categories (${(100 * (total - uncategorised) / Math.max(1, total)).toFixed(1)}% classified; ` +
+      `${uncategorised.toLocaleString()} unclassified stay available in unfiltered games)`
+  );
+  console.log("    category            chaos     party");
+  const countFor = db.prepare("SELECT COUNT(*) c FROM mysteries WHERE (categories & ?) != 0 AND popularity >= ?");
+  for (const c of CATEGORIES) {
+    const all = countFor.get(BIT[c], 0).c;
+    const pty = countFor.get(BIT[c], party).c;
+    console.log(`    ${CATEGORY_LABELS[c].padEnd(18)} ${String(all).padStart(7)}   ${String(pty).padStart(7)}`);
+  }
 
   // Suggested guessability tiers by popularity percentile (the metric pool.js
   // filters on). Computed with one streaming scan + an in-place numeric sort.

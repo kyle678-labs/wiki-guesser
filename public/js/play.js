@@ -259,6 +259,10 @@
       // decided, so it shows neither — just who it found and that it's starting.
       $("invite-block").classList.toggle("hidden", !state.isPrivate);
       $("host-settings").classList.toggle("hidden", !state.isPrivate);
+      // Sibling of host-settings rather than a field inside it (the grid is for
+      // single selects), so it needs hiding explicitly — a matchmaking room's
+      // pool is fixed by the queue.
+      $("cat-picker").classList.toggle("hidden", !state.isPrivate);
       if (state.isPrivate) {
         $("share-link").value = `${location.origin}/room/${state.code}`;
         $("set-rounds").value = String(state.settings.rounds);
@@ -268,6 +272,7 @@
         setSeconds(state.settings.guessSeconds);
         $("set-rounds").disabled = $("set-mode").disabled = $("set-clue").disabled =
           $("set-seconds").disabled = $("set-chat").disabled = !isHost;
+        renderCategories(isHost);
       }
       const enoughPlayers = state.players.filter((p) => p.connected).length >= 2;
       if (!state.isPrivate) {
@@ -321,6 +326,99 @@
   $("guess-input").addEventListener("keydown", (e) => { if (e.key === "Enter") submitGuess(); });
 
   $("btn-start").addEventListener("click", () => WG.emit("room:start"));
+  // ── Category picker ─────────────────────────────────────────────────────────
+  // Each category shows how many articles it actually offers for THIS room's
+  // difficulty and clue type, because "Animals" meaning 3,000 articles or 90 is
+  // the difference between a varied game and seeing the same otter twice. When
+  // the party tier makes a chosen category thin, the note below says so and
+  // names the number chaos would give instead — a concrete comparison rather
+  // than a vague warning.
+  // Below this a pool is small enough that repeats show up quickly: at 5 rounds
+  // a game, 100 articles is roughly twenty sessions before you have seen most of
+  // it. Calibrated against the real pool, where party-tier image mode leaves
+  // Food & drink on 15 articles and Games on 21 — numbers a player would
+  // absolutely notice, and the reason the note points at Total chaos.
+  const THIN = 100;
+
+  function catCounts() {
+    const cfg = WG.getConfig() || {};
+    const counts = cfg.categoryCounts;
+    if (!counts || !state) return null;
+    const tier = counts[state.settings.mode] || counts.party;
+    return (tier && tier[state.settings.clue || "image"]) || null;
+  }
+
+  function renderCategories(isHost) {
+    const cfg = WG.getConfig() || {};
+    const cats = cfg.categories || [];
+    const labels = cfg.categoryLabels || {};
+    const chosen = new Set(state.settings.categories || []);
+    const counts = catCounts();
+
+    $("cat-grid").innerHTML = cats
+      .map((c) => {
+        const n = counts ? counts[c] : null;
+        const thin = n != null && n < THIN;
+        // aria-pressed because these are toggles: without it the only signal
+        // that a category is selected is a border colour, which a screen reader
+        // cannot convey and a colourblind player may not see.
+        return `<button type="button" class="cat-opt${chosen.has(c) ? " on" : ""}${thin ? " thin" : ""}"
+                  data-cat="${c}" aria-pressed="${chosen.has(c)}" ${isHost ? "" : "disabled"}>
+          <span class="cat-name">${WG.escapeHtml(labels[c] || c)}</span>
+          <span class="cat-count">${n == null ? "" : n.toLocaleString()}</span>
+        </button>`;
+      })
+      .join("");
+    $("cat-clear").disabled = !isHost || chosen.size === 0;
+    $("cat-note").innerHTML = categoryNote(chosen, counts);
+  }
+
+  function categoryNote(chosen, counts) {
+    if (!chosen.size) return "Any topic. Pick one or more to narrow the game.";
+
+    const cfg = WG.getConfig() || {};
+    const labels = cfg.categoryLabels || {};
+    const names = [...chosen].map((c) => WG.escapeHtml(labels[c] || c)).join(", ");
+    if (!counts) return `Drawing from: ${names}.`;
+
+    // Categories combine as OR — a round matches if the article is in ANY of
+    // them — so the pool is at most the sum. Articles in two chosen categories
+    // are double-counted here, which makes this a slight over-estimate and
+    // therefore the safe direction for a warning.
+    const total = [...chosen].reduce((n, c) => n + (counts[c] || 0), 0);
+    const line = `Drawing from: ${names} — about ${total.toLocaleString()} article${total === 1 ? "" : "s"}.`;
+    if (state.settings.mode !== "party") return line;
+
+    const chaosAll = (cfg.categoryCounts && cfg.categoryCounts.chaos) || null;
+    const chaosFor = chaosAll && chaosAll[state.settings.clue || "image"];
+    if (!chaosFor) return line;
+    const chaosTotal = [...chosen].reduce((n, c) => n + (chaosFor[c] || 0), 0);
+    if (chaosTotal <= total) return line;
+
+    // Judged on the combined pool, not per category — what a player experiences
+    // is the total they are drawing from, however many boxes produced it.
+    const thin = total < THIN;
+    return (
+      line +
+      `<br><span class="${thin ? "warn" : "muted"}">` +
+      (thin ? "That's a small pool — expect repeats. " : "") +
+      `Switching Difficulty to <strong>Total chaos</strong> raises it to about ${chaosTotal.toLocaleString()}.` +
+      "</span>"
+    );
+  }
+
+  $("cat-grid").addEventListener("click", (e) => {
+    const btn = e.target.closest(".cat-opt");
+    if (!btn || btn.disabled || !state) return;
+    const chosen = new Set(state.settings.categories || []);
+    const c = btn.dataset.cat;
+    if (chosen.has(c)) chosen.delete(c);
+    else chosen.add(c);
+    WG.emit("room:settings", { categories: [...chosen] });
+  });
+
+  $("cat-clear").addEventListener("click", () => WG.emit("room:settings", { categories: [] }));
+
   $("set-rounds").addEventListener("change", (e) => WG.emit("room:settings", { rounds: e.target.value }));
   $("set-seconds").addEventListener("change", (e) => WG.emit("room:settings", { guessSeconds: e.target.value }));
   $("set-mode").addEventListener("change", (e) => WG.emit("room:settings", { mode: e.target.value }));

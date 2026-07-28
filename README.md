@@ -151,6 +151,52 @@ chaos (the broader pool, still guessable).
 - **Combined** (`mixed`) — each round is independently, randomly a picture or a
   description.
 
+### Categories (private rooms only)
+
+A private-room host can narrow the pool to any combination of 12 categories —
+People, Places, Animals & nature, Film & TV, Music, Sport, Games, Books & comics,
+Science, History, Food & drink, Tech & transport. Selecting several is an **OR**:
+a round matches if the article is in any of them. Selecting none means anything,
+which is the default.
+
+**Ranked and casual rooms cannot set this.** A ladder is only meaningful if every
+match on it draws from the same pool, so the setting is rejected for
+non-private rooms exactly like the other queue-fixed settings.
+
+Classification happens **once, offline**, in `scripts/build-mysteries.js` via
+`server/game/categories.js`, and is stored as a bitmask column. Two signals from
+the CirrusSearch dump, in order of trust:
+
+1. `template` — the infobox an editor chose (`Template:Infobox film`,
+   `Template:Speciesbox`). About as close to a curated label as Wikipedia offers.
+   Note these must be normalised: the dump is full of sub-templates like
+   `Infobox settlement/styles.css`, and matching only exact names loses most of
+   them.
+2. `category` — noisy (every article carries maintenance categories), so only a
+   conservative, high-precision subset is matched. `Living people` and
+   `1962 births` are near-perfect biography markers and catch the long tail of
+   specialised person infoboxes.
+
+Roughly **60% of the pool classifies**. The rest are genuinely uncategorisable
+concept articles — *Anarchism*, *Albedo*, *Arithmetic mean* — which have no
+infobox. They stay in the pool and are served in unfiltered games; they simply
+can't be picked by category.
+
+The picker shows a **live article count per category** for the room's current
+tier and clue, and says plainly when switching to Total chaos would give a bigger
+pool. That matters because the party tier is only ~5.4k articles in total, so a
+narrow category there can get thin enough to repeat within a game.
+
+> **Categories require a pool rebuild.** They live in a `categories` column that
+> older pools don't have, so a pool built before this feature will fail every
+> category-filtered round. Rebuild with `scripts/build-mysteries.js` and re-upload
+> the artifact. The rebuild also adds 24 partial indexes (one per category × clue)
+> — without them a filtered pick degrades from an index walk into a full scan,
+> which blocks the event loop for every room on the box.
+
+Counts are computed once at boot (`warmCategoryCounts`) with a single grouped
+scan, not per request, and served through `/api/config`.
+
 Ratings live in the `ratings` table keyed by `(user_id, mode)`, where `mode` is
 the composite **ladder key** `"<clue>:<tier>"` (e.g. `image:chaos`) — so each
 clue × tier pair is its own ladder (up to 9). The leaderboard picks a clue and a
@@ -231,9 +277,10 @@ server/
   socket.js         Socket.IO event wiring
   game/
     pool.js         Offline mystery source (local SQLite pool; tiered by topic)
+    categories.js   Article categories: offline classifier + runtime helpers
     wikipedia.js    Legacy live-API mystery fetching (kept as a fallback)
     scoring.js      Pure scoring engine
-    topics.js       Curated topic list
+    topics.js       Curated seed titles for the live-API path (NOT categories)
 public/
   index.html        Landing page + lobby + leaderboard
   play.html         Game room

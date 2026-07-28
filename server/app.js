@@ -30,6 +30,8 @@ const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
 const { TIERS, TIER_LABELS, normalizeTier } = require("./tiers");
 const { ladderKey } = require("./ladders");
+const { CATEGORIES, CATEGORY_LABELS } = require("./game/categories");
+const { categoryCounts } = require("./game/pool");
 
 // How many past games the profile panel shows. Small on purpose: it is a "how
 // have I been doing lately" view, not an archive.
@@ -202,6 +204,13 @@ function buildServer(overrides = {}) {
       modeLabels: MODE_LABELS,
       tiers: TIERS,
       tierLabels: TIER_LABELS,
+      categories: CATEGORIES,
+      categoryLabels: CATEGORY_LABELS,
+      // Per tier and clue, so the private-room picker can show a real article
+      // count next to each category and say plainly when chaos would give more.
+      // null when there is no pool on disk (tests, or a failed S3 fetch) — the
+      // picker then simply shows no counts.
+      categoryCounts: categoryCounts(),
       user: getSessionUser(req),
     });
   });
