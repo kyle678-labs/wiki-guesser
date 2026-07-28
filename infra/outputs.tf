@@ -43,5 +43,10 @@ output "next_steps" {
          sudo tail -f /var/log/user-data.log
     4. Verify: curl https://${var.domain_name}/healthz
     5. Register the OAuth callback URLs above with Google and Discord.
+
+    If step 2 landed after the instance had already booted, the log shows
+    "WARNING: mystery pool unavailable". The site is up; only the rounds fail.
+    Upload the pool, then:
+         sudo ${var.project}-fetch-pool && sudo systemctl restart ${var.project}
   EOT
 }

@@ -54,7 +54,8 @@ Then follow the `next_steps` output, in order — the sequence matters:
    `domain_name` resolves to the box. Use a DNS-only record, not a proxied one,
    so the ACME HTTP-01 challenge reaches the instance.
 2. **Upload the mystery pool.** It's ~908 MB and gitignored, so it is not in the
-   repo the instance clones:
+   repo the instance clones. Do this promptly — the instance starts booting the
+   moment `apply` returns, and it fetches the pool once, early:
    ```bash
    aws s3 cp data/mysteries-lean.sqlite s3://$(terraform output -raw artifacts_bucket)/mysteries-lean.sqlite
    ```
@@ -66,9 +67,19 @@ Then follow the `next_steps` output, in order — the sequence matters:
 4. **Verify:** `curl https://your-domain/healthz`
 5. **Register the OAuth callbacks** printed in the `oauth_callback_urls` output.
 
-If you upload the pool after the instance has already booted, the app will be
-running but every round will fail. Re-run the bootstrap's fetch, or simply:
-`sudo systemctl restart wiki-guesser`.
+### If the pool wasn't there when the instance booted
+
+You'll see `WARNING: mystery pool unavailable` in `/var/log/user-data.log`. This
+is not fatal — the bootstrap deliberately continues, so the site, TLS and the
+systemd service all come up normally and only the rounds fail. Upload the pool,
+then fetch it and restart:
+
+```bash
+sudo wiki-guesser-fetch-pool && sudo systemctl restart wiki-guesser
+```
+
+`wiki-guesser-fetch-pool` is idempotent — it no-ops if the pool is already on the
+data volume — so it is always safe to run.
 
 ## Day-to-day
 

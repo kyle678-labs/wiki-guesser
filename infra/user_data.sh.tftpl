@@ -83,12 +83,39 @@ chown -R "$APP_USER:$APP_USER" "$DATA_DIR" "$LOG_DIR"
 # ── Mystery pool ─────────────────────────────────────────────────────────────
 # ~908 MB read-only artifact. Pulled once onto local disk; every subsequent boot
 # with the same data volume reuses it.
-if [ ! -f "$DATA_DIR/$POOL_KEY" ]; then
-  echo "Fetching mystery pool from s3://$BUCKET/$POOL_KEY"
-  aws s3 cp "s3://$BUCKET/$POOL_KEY" "$DATA_DIR/$POOL_KEY" --region "$REGION"
-  chown "$APP_USER:$APP_USER" "$DATA_DIR/$POOL_KEY"
-else
-  echo "Mystery pool already present — skipping download."
+#
+# Installed as a standalone command as well as being run here, because the
+# documented first-deploy order (terraform apply, THEN upload the pool) means the
+# object legitimately may not exist yet on the first boot.
+cat > "/usr/local/bin/$PROJECT-fetch-pool" <<EOF
+#!/bin/bash
+# Download the mystery pool onto the data volume unless it is already there.
+# Idempotent — safe to re-run at any time.
+set -euo pipefail
+if [ -f "$DATA_DIR/$POOL_KEY" ]; then
+  echo "Mystery pool already present at $DATA_DIR/$POOL_KEY — nothing to do."
+  exit 0
+fi
+echo "Fetching mystery pool from s3://$BUCKET/$POOL_KEY (~908 MB, takes a few minutes)…"
+# Download to a scratch name and rename on success. aws s3 cp leaves a partial
+# file behind if it is interrupted, and the existence check above would then
+# treat that truncated file as a complete pool on every later boot.
+aws s3 cp "s3://$BUCKET/$POOL_KEY" "$DATA_DIR/$POOL_KEY.partial" --region "$REGION"
+mv "$DATA_DIR/$POOL_KEY.partial" "$DATA_DIR/$POOL_KEY"
+chown "$APP_USER:$APP_USER" "$DATA_DIR/$POOL_KEY"
+echo "Mystery pool ready at $DATA_DIR/$POOL_KEY"
+EOF
+chmod +x "/usr/local/bin/$PROJECT-fetch-pool"
+
+# Deliberately NOT fatal. Under `set -e` a missing object would abort the whole
+# bootstrap here — before the systemd unit, Caddy, or TLS exist — leaving a box
+# that serves nothing and cannot be fixed by restarting a service that was never
+# installed. Finish the build instead: the site comes up, and only the rounds
+# fail until the pool arrives.
+if ! "/usr/local/bin/$PROJECT-fetch-pool"; then
+  echo "WARNING: mystery pool unavailable. The site will start and serve, but every" >&2
+  echo "         round will fail until it is present. Upload it to the bucket, then:" >&2
+  echo "           sudo $PROJECT-fetch-pool && sudo systemctl restart $PROJECT" >&2
 fi
 
 # ── Application ──────────────────────────────────────────────────────────────

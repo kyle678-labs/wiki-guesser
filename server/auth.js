@@ -38,6 +38,10 @@ function configurePassport() {
           // also all we need — we deliberately don't request "email", and the
           // privacy policy says so.
           scope: ["profile"],
+          // See the note on OAUTH_STATE below. Without this, passport-oauth2
+          // installs a NullStore and the callback is never bound to the session
+          // that started the flow.
+          state: true,
         },
         (accessToken, refreshToken, profile, done) => {
           try {
@@ -64,6 +68,7 @@ function configurePassport() {
           clientSecret: config.discord.clientSecret,
           callbackURL: `${config.baseUrl}/auth/discord/callback`,
           scope: ["identify"],
+          state: true, // see the note on OAUTH_STATE below
         },
         (accessToken, refreshToken, profile, done) => {
           try {
@@ -143,6 +148,21 @@ function getSessionUser(req) {
 
 const router = express.Router();
 
+// ── OAUTH_STATE ──────────────────────────────────────────────────────────────
+// Both strategies are constructed with `state: true`, which is what binds the
+// provider's callback to the session that began the flow.
+//
+// Without it passport-oauth2 falls back to a NullStore and verifies nothing, so
+// an authorization code from ANY session is accepted by ANY other. That is a
+// login CSRF: an attacker starts their own sign-in, captures their callback URL,
+// and gets a victim to load it — the victim's browser silently ends up signed
+// into the ATTACKER's account, and every game they then play, along with their
+// ratings and match history, accrues to an account someone else controls.
+//
+// `state: true` requires session support, which is why the session middleware is
+// registered before this router in app.js. A mismatched or missing state makes
+// the strategy fail() rather than error(), so it lands on the failureRedirect
+// below and the player just sees a failed sign-in.
 function providerStart(name) {
   return (req, res, next) => {
     const enabled = name === "google" ? config.google.enabled : config.discord.enabled;
