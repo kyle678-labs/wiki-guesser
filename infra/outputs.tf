@@ -59,7 +59,9 @@ output "dashboard_url" {
 output "next_steps" {
   description = "Ordered checklist after the first apply."
   value       = <<-EOT
-    1. Point ${var.domain_name} A record at ${aws_eip.app.public_ip}.
+    1. Confirm ${var.domain_name} A record points at ${aws_eip.app.public_ip}.
+       If you applied in two phases (-target=aws_eip.app first) this is already
+       done; verify rather than repeat it.
        On Cloudflare this MUST be DNS-only (grey cloud), not proxied (orange):
        Let's Encrypt's HTTP-01 challenge has to reach the box, and behind the
        proxy the app would see Cloudflare's IP as every player's IP and rate-limit

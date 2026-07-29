@@ -88,7 +88,11 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
   for_each = toset(var.allowed_http_cidrs)
 
   security_group_id = aws_security_group.app.id
-  description       = "HTTP — redirects to HTTPS, and serves the ACME HTTP-01 challenge"
+  # ASCII only, and not as a style preference: EC2 validates this field against
+  # a fixed character set (a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*) and rejects the
+  # request outright otherwise. An em-dash here fails at apply time with
+  # "Invalid rule description", which reads like a length problem and is not.
+  description       = "HTTP - redirects to HTTPS, and serves the ACME HTTP-01 challenge"
   cidr_ipv4         = each.value
   from_port         = 80
   to_port           = 80
@@ -99,7 +103,7 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
   for_each = toset(var.allowed_http_cidrs)
 
   security_group_id = aws_security_group.app.id
-  description       = "HTTPS — game traffic and the WebSocket upgrade"
+  description       = "HTTPS - game traffic and the WebSocket upgrade"
   cidr_ipv4         = each.value
   from_port         = 443
   to_port           = 443
@@ -311,8 +315,16 @@ resource "aws_instance" "app" {
   vpc_security_group_ids = [aws_security_group.app.id]
   iam_instance_profile   = aws_iam_instance_profile.app.name
 
-  credit_specification {
-    cpu_credits = var.cpu_credits
+  # Burstable CPU credits are a T-series concept only. The c7i-flex / m7i-flex
+  # families have their own baseline-and-burst model with no credit setting, and
+  # sending this block for one of them is a RunInstances error rather than a
+  # no-op. Emit it only when the instance type is actually a T.
+  dynamic "credit_specification" {
+    for_each = startswith(var.instance_type, "t") ? [1] : []
+
+    content {
+      cpu_credits = var.cpu_credits
+    }
   }
 
   root_block_device {
@@ -383,11 +395,34 @@ resource "aws_volume_attachment" "data" {
   instance_id = aws_instance.app.id
 }
 
+# Deliberately NOT tied to the instance via `instance = …`. Declaring the
+# association separately leaves this resource with no dependencies at all, which
+# means it can be created on its own, before anything else exists:
+#
+#     terraform apply -target=aws_eip.app
+#     terraform output -raw public_ip     # set DNS, let it propagate
+#     terraform apply                     # build the rest
+#
+# That ordering matters because Caddy asks Let's Encrypt for a certificate near
+# the end of the instance bootstrap, and the HTTP-01 challenge only succeeds if
+# the domain already resolves here. Allocating the address first turns a race
+# against the boot into a step you complete beforehand. Caddy does retry with
+# backoff, so getting this wrong is recoverable rather than fatal — but the
+# retries are slow and Let's Encrypt caps failed validations at five per
+# hostname per hour, so it is worth not needing them.
 resource "aws_eip" "app" {
-  instance = aws_instance.app.id
-  domain   = "vpc"
+  domain = "vpc"
 
   tags = { Name = local.name }
+}
+
+# The instance keeps its launch-assigned public IP until this replaces it.
+# Terraform creates the association immediately after the instance, which is
+# minutes before user_data reaches the Caddy step, so the certificate request
+# always goes out from the address DNS points at.
+resource "aws_eip_association" "app" {
+  allocation_id = aws_eip.app.id
+  instance_id   = aws_instance.app.id
 }
 
 # ── Backups ──────────────────────────────────────────────────────────────────

@@ -21,15 +21,15 @@ variable "acme_email" {
 }
 
 variable "instance_type" {
-  description = "ARM (Graviton) instance. t4g.medium = 2 vCPU / 4 GiB. Node is single-threaded and the SQLite reads are synchronous, so extra vCPUs buy almost nothing — the 4 GiB is the point: it keeps the ~908 MB pool page-cached alongside the Node heap with room to spare, which is what actually governs latency. Changing to an x86 type also requires changing ami_ssm_parameter."
+  description = "2 vCPU / 4 GiB. Node is single-threaded and the SQLite reads are synchronous, so extra vCPUs buy almost nothing - the 4 GiB is the point: it keeps the ~964 MB pool page-cached alongside the Node heap with room to spare, which is what actually governs latency. Do NOT drop to a 1 GiB type (t3.micro, t4g.micro) to save money: the pool alone is larger than that, so every mystery pick becomes a disk read and the event-loop-lag alarm in monitoring.tf becomes the steady state. MUST be kept in step with ami_ssm_parameter, which is architecture-specific."
   type        = string
-  default     = "t4g.medium"
+  default     = "c7i-flex.large"
 }
 
 variable "ami_ssm_parameter" {
-  description = "SSM public parameter resolving to the latest Amazon Linux 2023 AMI. Must match the instance architecture (…-arm64 for t4g, …-x86_64 for t3)."
+  description = "SSM public parameter resolving to the latest Amazon Linux 2023 AMI. MUST match the instance architecture: -x86_64 for c7i-flex/m7i-flex/t3, -arm64 for t4g. A mismatch fails at RunInstances with an unhelpful error about the image."
   type        = string
-  default     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+  default     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 variable "cpu_credits" {

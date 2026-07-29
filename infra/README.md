@@ -42,11 +42,27 @@ terraform validate
 terraform plan
 ```
 
-Read the plan. When you're happy:
+Read the plan. When you're happy, apply in two phases. The Elastic IP has no
+dependencies, so it can be allocated on its own first:
+
+```bash
+terraform apply -target=aws_eip.app
+terraform output -raw public_ip
+```
+
+Set your DNS to that address now (step 1 below) and let it propagate. Then build
+everything else:
 
 ```bash
 terraform apply
 ```
+
+Splitting it this way is not fussiness. Caddy requests a certificate near the end
+of the instance bootstrap, and the ACME HTTP-01 challenge only succeeds if the
+domain already resolves to the box — so a single apply leaves you racing the boot
+to get a DNS record in. Allocating the address first turns that race into a step
+you finish beforehand. A single `terraform apply` still works, and Caddy retries
+with backoff if DNS lands late; you just wait through the backoff.
 
 Then follow the `next_steps` output, in order — the sequence matters:
 
@@ -54,7 +70,8 @@ Then follow the `next_steps` output, in order — the sequence matters:
    `domain_name` resolves to the box. Use a DNS-only record, not a proxied one,
    so the ACME HTTP-01 challenge reaches the instance. **On Cloudflare the proxy
    is on by default and must be switched off** — see [Cloudflare](#cloudflare)
-   below for why, and for what it would take to run proxied instead.
+   below for why, and for what it would take to run proxied instead. A `www`
+   CNAME is required too; the Caddyfile has a block for it.
 2. **Upload the mystery pool.** It's ~908 MB and gitignored, so it is not in the
    repo the instance clones. Do this promptly — the instance starts booting the
    moment `apply` returns, and it fetches the pool once, early.
