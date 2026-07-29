@@ -46,6 +46,11 @@ output "data_volume_id" {
   value       = aws_ebs_volume.data.id
 }
 
+output "deploy_role_arn" {
+  description = "Role GitHub Actions assumes to deploy. Set it as the AWS_DEPLOY_ROLE_ARN repository secret (Settings -> Secrets and variables -> Actions). Until it is set, the deploy workflow fails at the credentials step."
+  value       = aws_iam_role.deploy.arn
+}
+
 output "dashboard_url" {
   description = "The one page to open when something feels wrong. Bookmark it."
   value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards/dashboard/${aws_cloudwatch_dashboard.main.dashboard_name}"

@@ -146,6 +146,31 @@ variable "discord_client_secret" {
   sensitive = true
 }
 
+# ── Deploy pipeline ──────────────────────────────────────────────────────────
+
+variable "github_repository" {
+  description = "owner/repo permitted to assume the deploy role. This is a security boundary, not a label: it is matched against the OIDC token's `sub` claim, and anything looser than one exact repository lets other people's workflows deploy to your instance."
+  type        = string
+  default     = "kyle678-labs/wiki-guesser"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", var.github_repository))
+    error_message = "github_repository must be exactly \"owner/repo\" — no URL, no wildcards, no trailing .git."
+  }
+}
+
+variable "deploy_tag_pattern" {
+  description = "Which tags may deploy, matched against the OIDC `sub` claim. \"v*\" means v1.0.0 and v2.1.3-rc1 deploy while a stray `scratch` tag does not. Widening this to \"*\" makes every tag a production deploy."
+  type        = string
+  default     = "v*"
+}
+
+variable "github_oidc_provider_arn" {
+  description = "ARN of an existing GitHub OIDC provider. AWS allows only ONE per account, so if another stack already created it, apply fails with EntityAlreadyExists — put its ARN here rather than deleting it, since whatever created it is likely still using it. Leave empty to create one. Find it with: aws iam list-open-id-connect-providers"
+  type        = string
+  default     = ""
+}
+
 variable "caddy_version" {
   description = "Caddy release to install for TLS termination and reverse proxying. Pinned rather than tracking latest so a boot is reproducible — but this process terminates all TLS, so bump it deliberately rather than leaving it to age. Check that both linux_arm64 and linux_amd64 assets exist for the tag before changing it; user_data picks by architecture."
   type        = string
