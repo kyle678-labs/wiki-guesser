@@ -59,6 +59,14 @@ output "next_steps" {
        Let's Encrypt's HTTP-01 challenge has to reach the box, and behind the
        proxy the app would see Cloudflare's IP as every player's IP and rate-limit
        them all into one shared bucket. See "Cloudflare" in infra/README.md.
+
+       ALSO create:  CNAME www -> ${var.domain_name}, likewise DNS-only.
+       The Caddyfile has a www block that redirects to the apex, and Caddy asks
+       Let's Encrypt for a www certificate on startup whether or not the record
+       exists. Without it that request fails and retries indefinitely against a
+       limit of five failed validations per hostname per hour. The apex keeps
+       serving either way — but create the record, or delete the www block from
+       user_data.sh.tftpl. Do not leave it half-configured.
     2. Check, then upload, the mystery pool:
          npm run check:pool
          aws s3 cp data/${var.mystery_pool_s3_key} s3://${aws_s3_bucket.artifacts.bucket}/${var.mystery_pool_s3_key}

@@ -147,9 +147,9 @@ variable "discord_client_secret" {
 }
 
 variable "caddy_version" {
-  description = "Caddy release to install for TLS termination and reverse proxying."
+  description = "Caddy release to install for TLS termination and reverse proxying. Pinned rather than tracking latest so a boot is reproducible — but this process terminates all TLS, so bump it deliberately rather than leaving it to age. Check that both linux_arm64 and linux_amd64 assets exist for the tag before changing it; user_data picks by architecture."
   type        = string
-  default     = "2.8.4"
+  default     = "2.11.4"
 }
 
 variable "node_major" {

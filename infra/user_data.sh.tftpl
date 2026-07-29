@@ -233,6 +233,21 @@ $DOMAIN {
 	# X-Forwarded-* — which is why the app runs with TRUST_PROXY=true.
 	reverse_proxy 127.0.0.1:3000
 }
+
+# Everything canonicalises to the apex. Without this block a www visitor gets a
+# TLS handshake failure rather than a 404 — Caddy serves a certificate per
+# hostname and has none for a name it was never told about — which shows up as a
+# browser security warning, i.e. worse than the record not existing at all.
+#
+# REQUIRES a www DNS record (CNAME www -> $DOMAIN, DNS-only). Caddy provisions a
+# separate certificate for this name on startup, so if the record is absent the
+# ACME challenge fails and retries in the background forever. That does not stop
+# the apex from serving, but it is noise against a Let's Encrypt rate limit of
+# five failed validations per hostname per hour. Create the record, or delete
+# this block — do not leave it half-configured.
+www.$DOMAIN {
+	redir https://$DOMAIN{uri} permanent
+}
 EOF
 
 cat > /etc/systemd/system/caddy.service <<'EOF'
