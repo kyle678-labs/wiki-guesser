@@ -2,7 +2,7 @@
 
 // A ranked ladder is one (clue × topic-tier) pair — e.g. "image:chaos". Ratings
 // are keyed by this composite so each difficulty tier is its own ladder, giving
-// clue count × tier count = up to 9 independent ladders.
+// clue count × tier count independent ladders — 3 × 2 = 6 as it stands.
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
 const { TIERS, TIER_LABELS, normalizeTier } = require("./tiers");
 

@@ -18,11 +18,6 @@ output "log_group" {
   value       = aws_cloudwatch_log_group.app.name
 }
 
-output "data_volume_id" {
-  description = "The volume holding users, ratings and match history. Snapshotted daily by DLM."
-  value       = aws_ebs_volume.data.id
-}
-
 output "oauth_callback_urls" {
   description = "Register these exactly in the Google and Discord developer consoles."
   value = {
@@ -59,10 +54,14 @@ output "dashboard_url" {
 output "next_steps" {
   description = "Ordered checklist after the first apply."
   value       = <<-EOT
-    1. Point ${var.domain_name} A record at ${aws_eip.app.public_ip} (DNS-only, not proxied,
-       so Let's Encrypt's HTTP-01 challenge can reach the box).
-    2. Upload the mystery pool:
-         aws s3 cp data/mysteries-lean.sqlite s3://${aws_s3_bucket.artifacts.bucket}/${var.mystery_pool_s3_key}
+    1. Point ${var.domain_name} A record at ${aws_eip.app.public_ip}.
+       On Cloudflare this MUST be DNS-only (grey cloud), not proxied (orange):
+       Let's Encrypt's HTTP-01 challenge has to reach the box, and behind the
+       proxy the app would see Cloudflare's IP as every player's IP and rate-limit
+       them all into one shared bucket. See "Cloudflare" in infra/README.md.
+    2. Check, then upload, the mystery pool:
+         npm run check:pool
+         aws s3 cp data/${var.mystery_pool_s3_key} s3://${aws_s3_bucket.artifacts.bucket}/${var.mystery_pool_s3_key}
     3. Watch the bootstrap:
          aws ssm start-session --target ${aws_instance.app.id}
          sudo tail -f /var/log/user-data.log

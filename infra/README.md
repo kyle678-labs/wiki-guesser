@@ -24,7 +24,7 @@ Internet → Elastic IP → EC2 t4g.medium
                           └── Node  :3000 (systemd, SIGTERM-drained)
                                 └── EBS data volume  → daily DLM snapshots
                                       wiki-guesser.sqlite   (players, ratings)
-                                      mysteries-lean.sqlite (read-only pool)
+                                      mysteries.sqlite      (read-only pool)
 ```
 
 Secrets live in SSM Parameter Store, logs go to CloudWatch, and there is **no SSH**
@@ -52,12 +52,24 @@ Then follow the `next_steps` output, in order — the sequence matters:
 
 1. **Point DNS at the Elastic IP.** Caddy cannot get a certificate until
    `domain_name` resolves to the box. Use a DNS-only record, not a proxied one,
-   so the ACME HTTP-01 challenge reaches the instance.
+   so the ACME HTTP-01 challenge reaches the instance. **On Cloudflare the proxy
+   is on by default and must be switched off** — see [Cloudflare](#cloudflare)
+   below for why, and for what it would take to run proxied instead.
 2. **Upload the mystery pool.** It's ~908 MB and gitignored, so it is not in the
    repo the instance clones. Do this promptly — the instance starts booting the
-   moment `apply` returns, and it fetches the pool once, early:
+   moment `apply` returns, and it fetches the pool once, early.
+
+   **Check it first.** A pool built before the categories feature has no
+   `categories` column, and on such a pool every category-filtered private round
+   fails while everything else looks perfectly healthy — the picker just shows no
+   counts. Uploading a stale pool is the easiest way to ship this broken, so
+   verify before you spend ten minutes on the copy:
    ```bash
-   aws s3 cp data/mysteries-lean.sqlite s3://$(terraform output -raw artifacts_bucket)/mysteries-lean.sqlite
+   npm run check:pool
+   ```
+   Then upload:
+   ```bash
+   aws s3 cp data/mysteries.sqlite s3://$(terraform output -raw artifacts_bucket)/mysteries.sqlite
    ```
 3. **Watch the bootstrap.** It takes several minutes, mostly the pool download:
    ```bash
@@ -80,6 +92,53 @@ sudo wiki-guesser-fetch-pool && sudo systemctl restart wiki-guesser
 
 `wiki-guesser-fetch-pool` is idempotent — it no-ops if the pool is already on the
 data volume — so it is always safe to run.
+
+## Cloudflare
+
+If `wiki-guesser.com` is on Cloudflare, the record must be **DNS-only (grey
+cloud)**. That is the configuration this stack is built for, and it is not the
+default — Cloudflare turns the proxy on for new A records automatically, so this
+is an active step, not an absence of one.
+
+Turning the orange cloud on breaks three things, in descending order of how long
+they take to notice:
+
+1. **Every player shares one rate-limit bucket.** Cloudflare presents its own
+   edge IP to the origin. Express is configured `trust proxy: 1`, which trusts a
+   single hop (Caddy) — so with Cloudflare in front it reads the *edge* IP as
+   `req.ip`, not the player's. `RATE_LIMIT_API` (300 per 15 min) and
+   `RATE_LIMIT_AUTH` (30 per 15 min) then apply to **all traffic combined**, and
+   real players start getting 429s as soon as a few of them are online. The
+   symptom — sign-in failing intermittently under load — looks nothing like its
+   cause.
+2. **Certificate issuance.** Caddy uses the ACME HTTP-01 challenge, which needs
+   to reach the instance on port 80. Behind the proxy this depends on
+   Cloudflare's SSL mode and its "Always Use HTTPS" setting, and the usual
+   result is a boot that never gets a certificate.
+3. **Request logs record Cloudflare, not players.** The privacy policy commits to
+   logging IP addresses for abuse investigation; those logs stop being able to
+   answer the question they exist for.
+
+Cloudflare is still doing everything you actually need here — authoritative DNS,
+registrar, DNSSEC — with the proxy off. The origin is a single small instance
+with no autoscaling, so the CDN and DDoS features are not protecting anything
+that could absorb the traffic anyway.
+
+**If you later decide you do want the proxy**, it is three coordinated changes,
+all of which have to land together:
+
+- Set `TRUST_PROXY` hops to 2 in `/etc/wiki-guesser.env` (Cloudflare + Caddy).
+  Note the app reads `TRUST_PROXY` as a boolean today and hardcodes `1` hop in
+  `app.js` — that needs a code change, not just an env edit.
+- Narrow `allowed_http_cidrs` to [Cloudflare's published ranges](https://www.cloudflare.com/ips/),
+  or the origin IP remains directly reachable and anyone can bypass the proxy —
+  and spoof `X-Forwarded-For` to defeat the rate limits entirely. Doing this also
+  breaks the Route53 `unreachable` health check, whose ~15 checker locations are
+  not in those ranges; add their ranges too, or drop the check.
+- Switch Caddy to a Cloudflare Origin certificate (or SSL mode Full (strict)),
+  and add Cloudflare as a recipient in `public/privacy.html` — proxied means they
+  terminate TLS and see every request, which makes them a processor you are
+  disclosing.
 
 ## Day-to-day
 

@@ -61,9 +61,9 @@ variable "app_repo_ref" {
 }
 
 variable "mystery_pool_s3_key" {
-  description = "Key of the lean mystery pool inside the artifacts bucket. Upload it once (see infra/README.md) — it is far too large for git."
+  description = "Key of the mystery pool inside the artifacts bucket. Upload it once (see infra/README.md) — it is far too large for git. Matches the default output name of scripts/build-mysteries.js so the local file, the S3 key and the on-box filename are all the same name and there is no rename step to get wrong. The pool MUST have been built after the categories feature landed — see the preflight check in infra/README.md."
   type        = string
-  default     = "mysteries-lean.sqlite"
+  default     = "mysteries.sqlite"
 }
 
 variable "allowed_http_cidrs" {

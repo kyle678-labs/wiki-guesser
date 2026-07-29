@@ -131,6 +131,25 @@ Runs the suite with Node's built-in test runner (no extra framework). Coverage:
   room clearing the matchmaking queue, and the per-identity connection cap.
 - **`profile.test.js`** — match history read from the viewer's side of the row,
   account deletion, and the inactivity sweep.
+- **`oauth.test.js`** — the login-CSRF guard: every authorization redirect carries
+  a `state`, a callback whose state doesn't match the session is refused, and each
+  provider gets its own state slot so one flow can't satisfy the other.
+- **`chat.test.js`** — sanitising and broadcast, the capped in-memory buffer, and
+  the report path (resolved from the server's own buffer, never from text the
+  reporter supplies; self-reports and invented ids refused; double reports
+  recorded once).
+- **`db.test.js`** — ratings tracked per ladder independently, and the leaderboard
+  cache being invalidated by a new result.
+- **`categories.test.js`** — the offline classifier: template normalisation past
+  `Template:` prefixes and sub-pages, multi-category articles, and the
+  conservative category rules that catch biographies.
+- **`pool-categories.test.js`** / **`pool-legacy.test.js`** — filtered picks are
+  an OR and never repeat within a game, a thin category widens the tier rather
+  than failing the round, the partial indexes are actually used, and a pool built
+  *before* categories still serves unfiltered rounds instead of throwing.
+- **`extract.test.js`** — first-sentence extraction and title blanking.
+- **`bot.test.js`** — a lone casual player is filled with a practice bot, and two
+  humans pair with each other rather than getting bots.
 
 Tests boot the real server in-process on an ephemeral port. The Wikipedia fetch
 is dependency-injected (see `buildServer({ roomOptions: { fetchMystery } })` in
@@ -177,7 +196,8 @@ the CirrusSearch dump, in order of trust:
    `1962 births` are near-perfect biography markers and catch the long tail of
    specialised person infoboxes.
 
-Roughly **60% of the pool classifies**. The rest are genuinely uncategorisable
+Roughly **69% of the pool classifies** (302,525 of 436,011 rows in the current
+build; `npm run check:pool` reports it). The rest are genuinely uncategorisable
 concept articles — *Anarchism*, *Albedo*, *Arithmetic mean* — which have no
 infobox. They stay in the pool and are served in unfiltered games; they simply
 can't be picked by category.
@@ -199,7 +219,7 @@ scan, not per request, and served through `/api/config`.
 
 Ratings live in the `ratings` table keyed by `(user_id, mode)`, where `mode` is
 the composite **ladder key** `"<clue>:<tier>"` (e.g. `image:chaos`) — so each
-clue × tier pair is its own ladder (up to 9). The leaderboard picks a clue and a
+clue × tier pair is its own ladder (3 clues × 2 tiers = 6). The leaderboard picks a clue and a
 tier (`/api/leaderboard?clue=&tier=`). Matchmaking queues are split by
 kind × clue × tier, so you only ever match someone who chose the same thing.
 Ladder keys are built in `server/ladders.js`.
@@ -267,14 +287,23 @@ server-side); the speed bonus is applied in `rooms.js`, which knows the timing.
 
 ```
 server/
-  index.js          Express + Socket.IO bootstrap, HTTP APIs, static hosting
+  index.js          Bootstrap: listen, warm caches, retention sweep, signals
+  app.js            Express + Socket.IO wiring, HTTP APIs, static hosting
   config.js         Env-driven configuration
-  db.js             SQLite schema + queries (users, matches)
+  db.js             SQLite schema + queries (users, ratings, matches)
   auth.js           Passport Google/Discord OAuth + guest identity
-  elo.js            Elo rating math + tiers
+  elo.js            Elo rating math + rank tiers
+  modes.js          Clue modes: image | text | mixed
+  tiers.js          Topic tiers: party | chaos
+  ladders.js        Ladder key "<clue>:<tier>" — 6 ranked ladders
   matchmaking.js    Pure ranked pairing rule (search windows, closest pair)
-  rooms.js          Room engine (round loop) + matchmaking manager
+  rooms.js          Room engine (round loop) + matchmaking manager + bot-fill
   socket.js         Socket.IO event wiring
+  bot.js            Practice bot (identity, guess logic, timing)
+  ratelimit.js      Per-socket token buckets
+  log.js            Structured JSON logging (one object per line)
+  metrics.js        Event-loop lag + memory sampling
+  shutdown.js       SIGTERM drain
   game/
     pool.js         Offline mystery source (local SQLite pool; tiered by topic)
     categories.js   Article categories: offline classifier + runtime helpers
@@ -284,11 +313,54 @@ server/
 public/
   index.html        Landing page + lobby + leaderboard
   play.html         Game room
-  js/               common.js (shared), home.js, play.js
+  privacy.html      Privacy policy (/privacy)
+  terms.html        Terms of service (/terms)
+  js/               common.js (shared), home.js, play.js, theme.js, legal.js
   css/styles.css
+scripts/
+  build-mysteries.js         Build the offline pool from Wikipedia dumps
+  check-pool.js              Preflight a built pool before uploading it
+  backup-restore-drill.js    Prove a crash-consistent snapshot is restorable
+  migrate-ratings-to-tiers.js
+infra/                       Terraform: the whole AWS production stack
+test/                        Node test runner suite (npm test)
 ```
 
-## Deploying to a VPS
+## Deploying
+
+### On AWS (the supported path)
+
+`infra/` is a Terraform module that stands up the whole production stack —
+EC2 + Elastic IP, Caddy terminating TLS with an auto-renewed Let's Encrypt
+certificate, a separate EBS data volume with daily snapshots, secrets in SSM,
+JSON logs and alarms in CloudWatch, and shell access via Session Manager rather
+than SSH. Roughly $34–37/month.
+
+```bash
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # then edit it
+terraform init && terraform apply
+```
+
+Then follow the `next_steps` output in order — the sequence matters, and the
+mystery pool has to be uploaded separately because it is ~908 MB and gitignored.
+**Read [`infra/README.md`](infra/README.md) first**: it covers the deploy order,
+the alarms and what to do when each one fires, restoring from a snapshot, and —
+if your DNS is on Cloudflare — why the record has to be DNS-only rather than
+proxied.
+
+Before uploading the pool, check it:
+
+```bash
+npm run check:pool
+```
+
+A pool built before the categories feature has no `categories` column, and on
+one every category-filtered private round fails while the rest of the game looks
+entirely healthy. The check refuses the bad pool rather than letting you spend
+ten minutes uploading it.
+
+### On a plain VPS
 
 1. Install Node 18+ and clone the repo.
 2. `npm ci --omit=dev` (or `npm install`), create `.env`, set `NODE_ENV=production`

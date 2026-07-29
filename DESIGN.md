@@ -166,7 +166,9 @@ Approx. avg points/round: skill 0.25 → ~44, **0.5 → ~60**, 1.0 → ~87.
 | `NODE_ENV` | development | `production` ⇒ secure cookies |
 | `GOOGLE_*` / `DISCORD_*` | — | OAuth (ranked identity) |
 | `ADSENSE_CLIENT` / `_SLOT` | — | optional ad slots |
-| `MYSTERY_DB` | `data/mysteries.sqlite` | which pool to serve (set to the lean DB) |
+| `MYSTERY_DB` | `data/mysteries.sqlite` | which pool to serve |
+| `DATA_DIR` | `data/` | where the player database lives (prod: `/var/lib/wiki-guesser`) |
+| `TRUST_PROXY` | on when prod | trust one proxy hop, so secure cookies and `req.ip` work behind Caddy |
 | `PARTY_MIN_POP` / `CHAOS_MIN_POP` | 1e-5 / 2e-7 | tier popularity floors |
 | `ROUNDS_PER_GAME` | 5 | rounds per game |
 | `GUESS_SECONDS` | 20 | guessing window |
