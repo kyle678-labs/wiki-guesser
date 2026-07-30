@@ -485,6 +485,92 @@ const WG = (() => {
     });
   }
 
+  // ── Daily strip ──────────────────────────────────────────────────────────────
+  // The three daily puzzles across the top of each of their pages: which ones
+  // are today's, which you have already done, and what you scored. Driven off
+  // /api/daily rather than hardcoded, so adding a fourth game is a change in
+  // server/dailies.js and nowhere else — including here.
+  //
+  // Rendered async and quietly: it is navigation, not the game, so a page whose
+  // strip fails to load is still perfectly playable.
+  async function renderDailyStrip(el, currentId) {
+    if (!el) return;
+    let data;
+    try {
+      const res = await fetch("/api/daily", { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`daily hub ${res.status}`);
+      data = await res.json();
+    } catch (e) {
+      console.error("daily strip failed to load", e);
+      el.innerHTML = "";
+      return;
+    }
+
+    el.innerHTML = data.games
+      .map((g) => {
+        const state = !g.available
+          ? `<span class="daily-tab-state muted">unavailable</span>`
+          : g.played
+            ? `<span class="daily-tab-state done">✓ ${g.score} ${escapeHtml(g.unit)}</span>`
+            : `<span class="daily-tab-state">not played</span>`;
+        const body = `<span class="daily-tab-name">${escapeHtml(g.name)}</span>${state}`;
+        // The page you are on is not a link to itself, and a game with no
+        // puzzle today is not a link at all — both would be dead clicks.
+        return g.id === currentId || !g.available
+          ? `<span class="daily-tab${g.id === currentId ? " current" : ""}">${body}</span>`
+          : `<a class="daily-tab" href="${g.path}">${body}</a>`;
+      })
+      .join("");
+  }
+
+  // How long until the puzzles flip. Driven off the server's own figure rather
+  // than the browser's clock, so a machine with the wrong time still counts down
+  // to the right moment. One timer per element — restarting replaces it rather
+  // than stacking a second one on top.
+  const countdowns = new WeakMap();
+  function startDailyCountdown(el, { day, resetInMs }) {
+    if (!el) return;
+    clearInterval(countdowns.get(el));
+    const endsAt = Date.now() + resetInMs;
+    const tick = () => {
+      const left = Math.max(0, endsAt - Date.now());
+      const h = Math.floor(left / 3600000);
+      const m = Math.floor((left % 3600000) / 60000);
+      const s = Math.floor((left % 60000) / 1000);
+      el.textContent = `Puzzle for ${day} · next one in ${h}h ${m}m ${s}s`;
+      if (left <= 0) {
+        clearInterval(countdowns.get(el));
+        el.textContent = "A new puzzle is ready — reload to play it.";
+      }
+    };
+    tick();
+    countdowns.set(el, setInterval(tick, 1000));
+  }
+
+  // Today's board for one daily game. The score column is labelled from the
+  // unit the server reports, because 12 guesses, 12 moves and 12 swaps are three
+  // different things and only the server knows which game this is.
+  async function loadDailyBoard(game, { body, me, head } = {}) {
+    if (!body) return;
+    try {
+      const res = await fetch(`/api/daily/${game}/leaderboard`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`board ${res.status}`);
+      const data = await res.json();
+      const amount = (n) => `${n} ${n === 1 ? data.unitOne : data.unit}`;
+
+      if (head) head.textContent = data.unit.charAt(0).toUpperCase() + data.unit.slice(1);
+      body.innerHTML = data.leaderboard.length
+        ? data.leaderboard
+            .map((r) => `<tr><td>${r.rank}</td><td>${escapeHtml(r.name)}</td><td>${r.score}</td></tr>`)
+            .join("")
+        : `<tr><td colspan="3" class="muted">Nobody has solved it yet today — go first.</td></tr>`;
+      if (me) me.textContent = data.me ? `You: #${data.me.rank} with ${amount(data.me.score)}.` : "";
+    } catch (e) {
+      console.error("daily board failed to load", e);
+      body.innerHTML = `<tr><td colspan="3" class="muted">Couldn't load the board.</td></tr>`;
+    }
+  }
+
   function injectAds() {
     const ads = config && config.adsense;
     document.querySelectorAll(".ad-slot").forEach((slot) => {
@@ -549,6 +635,7 @@ const WG = (() => {
     loadConfig, getConfig, getUser, connect, on, emit, reconnect,
     guestLogin, logout, showAuthModal, ensureUser, renderUserPill, showProfile,
     injectAds, toast, escapeHtml, avatarHtml, initTheme, chooseMode, modeLabel,
+    renderDailyStrip, startDailyCountdown, loadDailyBoard,
     chooseTier, tierLabel, ladderLabel, chatEnabled, setChatEnabled, rankedConfig,
   };
 })();

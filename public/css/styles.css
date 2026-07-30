@@ -500,3 +500,94 @@ a.btn-link:hover { background: var(--progressive-hover); border-color: var(--pro
 @media (max-width: 600px) {
   .daily-clue { font-size: 1.15rem; }
 }
+
+/* ── The daily strip ──────────────────────────────────────────────────────────
+   Three puzzles across the top of all three daily pages: where you are, what
+   you have already done today, and what you scored. */
+.daily-strip { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.2rem; }
+.daily-tab {
+  flex: 1 1 7rem; display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.5rem 0.7rem; background: var(--bg2);
+  border: 1px solid var(--border-light); border-radius: 2px;
+}
+a.daily-tab:hover { background: var(--bg3); border-color: var(--border); text-decoration: none; }
+/* The page you are already on. Marked with a rule down the side as well as a
+   colour, so it does not depend on seeing the accent. */
+.daily-tab.current { background: var(--bg); border-color: var(--border); border-left: 3px solid var(--progressive); }
+.daily-tab-name { font-family: var(--font-serif); font-size: 1.02rem; color: var(--text); }
+.daily-tab-state { font-size: 0.75rem; color: var(--muted); }
+.daily-tab-state.done { color: var(--green); font-weight: 600; }
+
+/* ── Wikitile (the daily picture scramble) ────────────────────────────────────
+   The board is deliberately gapless: tiles.js sizes each tile's background from
+   `clientWidth / grid`, so a gap between cells would shift every window over
+   the picture and the seams would stop lining up. The seams are drawn with an
+   inset shadow instead, which costs no layout — and vanishes when the picture
+   is whole. */
+.tile-board {
+  display: grid; grid-template-columns: repeat(var(--grid, 4), 1fr);
+  width: 100%; max-width: 460px; margin: 0 auto 1rem; aspect-ratio: 1 / 1;
+  background: var(--bg3); border: 1px solid var(--border);
+  /* Without this a drag on a touchscreen scrolls the page instead. */
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.tile-board.loading { opacity: 0.45; }
+
+.tile {
+  padding: 0; border: 0; border-radius: 0; background-color: var(--bg2);
+  background-repeat: no-repeat; cursor: grab;
+  box-shadow: inset 0 0 0 1px var(--shadow);
+  transition: transform 0.12s ease;
+}
+.tile:focus-visible { outline: 2px solid var(--progressive); outline-offset: -2px; z-index: 2; }
+.tile:disabled { cursor: default; box-shadow: none; }
+/* Lifted, and transparent to hit-testing so the drop target underneath can be
+   found (see endDrag in tiles.js). */
+.tile.dragging {
+  cursor: grabbing; z-index: 3; pointer-events: none; transition: none;
+  opacity: 0.9; box-shadow: 0 4px 14px var(--shadow);
+}
+.tile-board.solved { border-color: var(--green); }
+.tile-board.solved .tile { box-shadow: none; }
+
+/* ── Wikimatch (the daily picture matchup) ──────────────────────────────────── */
+.match-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; margin-bottom: 1rem; }
+.match-cell { display: flex; flex-direction: column; gap: 0.4rem; }
+/* Near-square frames, and `contain` rather than `cover`. Cropping to a tidy
+   grid is the wrong trade in this game specifically: the picture IS the clue,
+   and the detail that identifies it — a face, a spire, a logo in the corner —
+   is exactly what a crop throws away. Letterboxing costs some tidiness and
+   nothing else. The frame is squarish because these come in both orientations
+   and neither should be squeezed into a shape drawn for the other. */
+.match-photo {
+  aspect-ratio: 1 / 1; max-height: 260px; overflow: hidden;
+  background: var(--bg3); border: 1px solid var(--border-light);
+}
+.match-photo img { display: block; width: 100%; height: 100%; object-fit: contain; }
+
+button.match-title {
+  width: 100%; font-size: 0.82rem; line-height: 1.25; font-weight: 600;
+  padding: 0.35rem 0.4rem; text-align: center; cursor: pointer;
+  /* Nine titles, some of them long. Wrapping beats truncating: a caption you
+     cannot read in full is a picture you cannot match it to. */
+  white-space: normal; overflow-wrap: anywhere;
+}
+/* The caption waiting for a partner. Carries a mark as well as the accent, so
+   the state does not depend on colour alone. */
+button.match-title.picked { background: var(--progressive); border-color: var(--progressive); color: #fff; }
+button.match-title.picked::before { content: "⇄ "; }
+a.match-title.solved {
+  display: block; text-align: center; font-size: 0.82rem; line-height: 1.25; font-weight: 600;
+  padding: 0.35rem 0.4rem; border: 1px solid var(--green); border-radius: 2px;
+  color: var(--green); overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .match-grid { grid-template-columns: repeat(2, 1fr); gap: 0.7rem; }
+  /* Three puzzles, one row, even on the narrowest phone — wrapped they take a
+     third of the screen before the game starts. */
+  .daily-strip { gap: 0.4rem; }
+  .daily-tab { flex-basis: 5rem; padding: 0.4rem 0.5rem; }
+  .daily-tab-name { font-size: 0.92rem; }
+  .daily-tab-state { font-size: 0.7rem; }
+}

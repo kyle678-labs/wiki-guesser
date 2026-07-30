@@ -36,6 +36,7 @@ server/
   ladders.js      ranked ladder key = "<clue>:<tier>"; which pairs ranked allows
   rooms.js        Room engine (round loop) + matchmaking manager + bot-fill
   socket.js       Socket.IO event wiring
+  dailies.js      HTTP routes for the three daily puzzles (progress on the session)
   bot.js          practice bot (identity, guess logic, timing)
   log.js          structured JSON logging (one object per line, stdout/stderr)
   ratelimit.js    token buckets for Socket.IO events
@@ -45,7 +46,12 @@ server/
     scoring.js    pure scoring engine (naming + article-word hits)
     extract.js    builds the blanked "description" clue
     wikipedia.js  legacy live-API source (fallback; unused by default)
-public/           index.html (lobby+leaderboard), play.html (room), js/, css/
+    daily.js      shared daily machinery: the UTC day, seeded picks, seeded shuffles
+    wikidle.js    daily: name the article from its opening words
+    tiles.js      daily: one picture, sixteen scrambled tiles
+    match.js      daily: nine pictures, nine titles, all misfiled
+public/           index.html (lobby+leaderboard), play.html (room),
+                  daily.html / tiles.html / match.html (the dailies), js/, css/
 scripts/
   build-mysteries.js          builds the offline pool from Wikimedia dumps
   migrate-ratings-to-tiers.js one-off ratings migration to ladder keys

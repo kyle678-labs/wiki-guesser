@@ -129,6 +129,37 @@ function pickDaily({ day, gameId, clue = "image", minPop, count = 1, minTextLen 
   return rows;
 }
 
+// ── Deterministic shuffles ───────────────────────────────────────────────────
+// The picture games need more than an article: they need a scramble, and it has
+// to be the same scramble for everyone. Fisher-Yates over a caller-supplied
+// `next()` rather than Math.random, so the shuffle comes out of the same seeded
+// stream as the rest of the day and nothing has to be stored to reproduce it.
+function shuffle(items, next) {
+  const out = items.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Fewest swaps that sorts a permutation: n minus its number of cycles. Every
+// cycle of length k needs k-1 swaps, and the cycles partition the array.
+//
+// This is what "par" means in both picture games — the score a player who never
+// wastes a move would post. Worth stating rather than leaving implicit: without
+// it a board of move counts is a number with nothing to compare it against.
+function swapsToSort(perm) {
+  const seen = new Array(perm.length).fill(false);
+  let cycles = 0;
+  for (let i = 0; i < perm.length; i++) {
+    if (seen[i]) continue;
+    cycles++;
+    for (let j = i; !seen[j]; j = perm[j]) seen[j] = true;
+  }
+  return perm.length - cycles;
+}
+
 // ── Per-day caching ──────────────────────────────────────────────────────────
 // A day's puzzle is built once and reused until the key changes. Keyed by day
 // as well as game so the entry replaces itself at rollover rather than needing
@@ -147,4 +178,4 @@ function cachedForDay(gameId, day, build) {
   return built;
 }
 
-module.exports = { dayKey, msUntilReset, seedFor, rng, pickDaily, cachedForDay };
+module.exports = { dayKey, msUntilReset, seedFor, rng, pickDaily, cachedForDay, shuffle, swapsToSort };

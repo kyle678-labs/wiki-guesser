@@ -22,8 +22,9 @@
     WG.renderUserPill($("user-pill"));
   }
 
+  WG.renderDailyStrip($("daily-strip"), "wikidle");
+
   let state = null;
-  let resetTimer = null;
 
   // ── Rendering ───────────────────────────────────────────────────────────────
 
@@ -97,61 +98,14 @@
     renderResult();
   }
 
-  // ── Countdown ───────────────────────────────────────────────────────────────
-  // Driven off the server's own figure rather than the browser's clock, so a
-  // machine with the wrong time still counts down to the right moment.
-  function startResetCountdown(ms) {
-    clearInterval(resetTimer);
-    const endsAt = Date.now() + ms;
-    const tick = () => {
-      const left = Math.max(0, endsAt - Date.now());
-      const h = Math.floor(left / 3600000);
-      const m = Math.floor((left % 3600000) / 60000);
-      const s = Math.floor((left % 60000) / 1000);
-      $("daily-reset").textContent = `Puzzle for ${state.day} · next one in ${h}h ${m}m ${s}s`;
-      if (left <= 0) {
-        clearInterval(resetTimer);
-        $("daily-reset").textContent = "A new puzzle is ready — reload to play it.";
-      }
-    };
-    tick();
-    resetTimer = setInterval(tick, 1000);
-  }
-
-  // ── Board ───────────────────────────────────────────────────────────────────
-
-  async function loadBoard() {
-    try {
-      const res = await fetch("/api/daily/wikidle/leaderboard", { credentials: "same-origin" });
-      if (!res.ok) throw new Error(`board ${res.status}`);
-      const { leaderboard, me } = await res.json();
-      const body = $("daily-board");
-      body.innerHTML = leaderboard.length
-        ? leaderboard
-            .map(
-              (r) => `<tr>
-                <td>${r.rank}</td>
-                <td>${WG.escapeHtml(r.name)}</td>
-                <td>${r.score}</td>
-              </tr>`
-            )
-            .join("")
-        : `<tr><td colspan="3" class="muted">Nobody has solved it yet today — go first.</td></tr>`;
-      $("daily-me").textContent = me
-        ? `You: #${me.rank} with ${me.score} ${me.score === 1 ? "guess" : "guesses"}.`
-        : "";
-    } catch (e) {
-      console.error("daily board failed to load", e);
-      $("daily-board").innerHTML = `<tr><td colspan="3" class="muted">Couldn't load the board.</td></tr>`;
-    }
-  }
-
   // ── Play ────────────────────────────────────────────────────────────────────
+
+  const loadBoard = () => WG.loadDailyBoard("wikidle", { body: $("daily-board"), me: $("daily-me") });
 
   function apply(next) {
     state = next;
     render();
-    startResetCountdown(state.resetInMs);
+    WG.startDailyCountdown($("daily-reset"), state);
     if (state.done) loadBoard();
   }
 

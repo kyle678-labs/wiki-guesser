@@ -25,7 +25,7 @@ const log = require("./log");
 const metrics = require("./metrics");
 const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
-const { router: dailyRouter } = require("./dailies");
+const { router: dailyRouter, MOVE_PATHS } = require("./dailies");
 const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
@@ -188,11 +188,11 @@ function buildServer(overrides = {}) {
   app.use(passport.session());
 
   // ── Rate limiting ───────────────────────────────────────────────────────────
-  // /auth is the sharper of the two: POST /auth/guest mints a session and writes
-  // a row to SQLite, so an unthrottled loop is a disk-fill. Limits are
+  // /auth is the sharpest of the three: POST /auth/guest mints a session and
+  // writes a row to SQLite, so an unthrottled loop is a disk-fill. Limits are
   // overridable so tests can drive them without waiting out a 15-minute window.
   const limits = { ...config.rateLimit, ...(overrides.rateLimit || {}) };
-  const makeLimiter = (name, max) =>
+  const makeLimiter = (name, max, opts = {}) =>
     rateLimit({
       windowMs: limits.windowMs,
       limit: max,
@@ -202,10 +202,19 @@ function buildServer(overrides = {}) {
         log.warn("rate_limited", { limiter: name, path: req.originalUrl.split("?")[0], ip: req.ip });
         res.status(429).json({ error: "Too many requests — slow down and try again shortly." });
       },
+      ...opts,
     });
 
+  // The picture dailies post one request per move (see dailies.js for why the
+  // count has to be the server's). That is a legitimate few hundred requests
+  // from one person in an evening, which the API budget is not sized for and
+  // should not have to be — so they are budgeted separately and the API limiter
+  // steps over them rather than counting them twice.
+  const isDailyMove = (req) => MOVE_PATHS.includes(req.originalUrl.split("?")[0]);
+
   app.use("/auth", makeLimiter("auth", limits.auth));
-  app.use("/api", makeLimiter("api", limits.api));
+  app.use(MOVE_PATHS, makeLimiter("dailyMoves", limits.dailyMoves));
+  app.use("/api", makeLimiter("api", limits.api, { skip: isDailyMove }));
 
   // ── API ─────────────────────────────────────────────────────────────────────
   app.get("/api/config", (req, res) => {

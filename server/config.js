@@ -107,6 +107,13 @@ const config = {
     windowMs: parseInt(process.env.RATE_WINDOW_MS, 10) || 15 * 60 * 1000,
     auth: parseInt(process.env.RATE_LIMIT_AUTH, 10) || 30, // /auth/* per window
     api: parseInt(process.env.RATE_LIMIT_API, 10) || 300, // /api/* per window
+    // The picture dailies post one request per move, because a move count is
+    // only worth putting on a board if the server is the thing counting it. A
+    // solve is tens of requests and a fumbled one is hundreds, which would eat
+    // the whole API budget above — so they get their own, and the API limiter
+    // skips them (see app.js). ~1/second sustained: far more than a player
+    // dragging tiles can produce, and still nothing a script can hide in.
+    dailyMoves: parseInt(process.env.RATE_LIMIT_DAILY_MOVES, 10) || 900,
   },
 
   // Ranked matchmaking. A waiting player accepts opponents within `startWindow`

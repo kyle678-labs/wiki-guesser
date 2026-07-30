@@ -9,7 +9,9 @@ from its article — before the timer runs out. Highest total after all rounds w
 - **Ranked matches** — random 1-on-1 matchmaking with an Elo ladder and tiers.
 - **Casual quick match** — instant random matchup, no rating on the line (guests welcome).
 - **Private rooms** — create a room, share a link, play with up to 8 friends.
-- **Wikidle** — a daily solo puzzle at `/daily`, same article for everyone, with its own leaderboard.
+- **Wikidle** — a daily solo puzzle at `/daily`: name the article from the opening words of its lead.
+- **Wikitile** — a daily picture scramble at `/tiles`: one article's picture, sixteen tiles, turned and shuffled.
+- **Wikimatch** — a daily matchup at `/match`: nine pictures, nine titles, every caption in the wrong place.
 - **Ads** — optional Google AdSense slots to cover server costs.
 
 Built with Node + Express + Socket.IO and SQLite. The answer and scoring live on
@@ -41,6 +43,7 @@ the code in the other to try a full multiplayer round.
 | `NODE_ENV` | `production` enables secure cookies + HSTS (serve over HTTPS). |
 | `LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`silent`. JSON logs on stdout. Default `info`. |
 | `RATE_LIMIT_AUTH` / `RATE_LIMIT_API` / `RATE_WINDOW_MS` | Per-IP HTTP rate limits. |
+| `RATE_LIMIT_DAILY_MOVES` | Per-IP budget for the picture dailies' move endpoints (default 900/window). They post one request per move, which is a different traffic shape from the rest of the API — so they are budgeted apart from it rather than inside it. |
 | `MAX_SOCKETS_PER_IDENTITY` | Simultaneous socket connections one identity may hold (default 6). Socket rate limits are per socket, so this is what caps them per player. |
 | `MM_START_WINDOW` / `MM_GROWTH_PER_SEC` / `MM_MAX_WINDOW` | Ranked search window: how close an opponent must be, and how fast that loosens while you wait. |
 | `MM_PROVISIONAL_BONUS` / `MM_PROVISIONAL_GAMES` | Extra search width for players whose rating isn't settled yet. |
@@ -241,12 +244,21 @@ someone who chose the same thing. All of this derives from `RANKED_MODES` /
 `RANKED_TIERS` in `server/ladders.js` — widening ranked is an edit there and
 nowhere else, including the client, which reads the set from `/api/config`.
 
-## Wikidle (the daily puzzle)
+## The daily puzzles
 
-`/daily` serves one article a day. You start with the first four words of its
-opening — its own name blanked out — and name it; every wrong guess reveals one
-more word. Your score is **how many guesses it took**, so lower is better and a
-first-try solve is a 1.
+Three solo puzzles, one of each per day, the same for everybody, each with its
+own leaderboard:
+
+| | Where | The puzzle | Scored in |
+|---|---|---|---|
+| **Wikidle** | `/daily` | Name the article from the first four words of its opening, its own name blanked out. Every wrong guess buys one more word. | guesses |
+| **Wikitile** | `/tiles` | One article's picture, cut into sixteen tiles, shuffled and turned. Tap to turn a tile, drag to swap two. | moves |
+| **Wikimatch** | `/match` | Nine pictures and nine titles, every caption under the wrong picture. Swap two captions at a time. | swaps |
+
+Everything below is true of all three. Lower is always better, and the picture
+games publish a **par** — the fewest moves the day's board can be solved in
+(`swapsToSort` in `game/daily.js`) — so a score has something to be measured
+against.
 
 **Nothing is timed.** A tie goes to whoever got there first (`created_at`), not
 to whoever typed fastest. A stopwatch on a daily rewards racing the clue rather
@@ -263,25 +275,42 @@ input a scoreboard must not trust.
 (`server/game/daily.js`), and that seed drives the same indexed `rnd` walk
 `pool.js` already uses for random picks. The pool is read-only, so the same day
 always resolves to the same article, on every instance, forever — with no table
-of upcoming puzzles to maintain or get out of sync.
+of upcoming puzzles to maintain or get out of sync. The picture games take their
+scramble from a second stream off the same seed, so the board is identical for
+everyone too and par means the same thing on every leaderboard.
 
-**The server holds everything worth lying about**: the answer, the words you
-have not earned, and the guess count. The page is only ever sent the words
-already revealed, so there is nothing in it to read ahead to — and the score is
-counted from the server's own list of guesses, so a 1 has to be earned rather
-than claimed. Someone who looks the answer up still scores 1, but that was
+**The server holds everything worth lying about.** Wikidle keeps the answer and
+the words you have not earned; Wikimatch keeps which caption belongs to which
+picture, and ships the pictures in one order and the titles in another with
+nothing joining them. Every guess, move and swap is applied to state held on the
+server, and the score is what the server counted — so a 1 has to be earned
+rather than claimed. Someone who looks an answer up still scores 1, but that was
 equally true when it was timed; dropping the clock costs no real defence.
+
+Wikitile is the honest exception, and worth naming: a jigsaw you cannot see is
+not a jigsaw, so the picture goes out immediately and only the article's *name*
+is withheld until you finish. Nothing in that puzzle is secret except the count,
+and the count is the server's. The same soft edge applies to Wikimatch — a
+Commons URL carries a filename that often names its subject, which is the trade
+the live picture rounds already make.
+
+That authority is why the two picture games post **one request per move**, and
+why those endpoints carry their own rate-limit budget (`RATE_LIMIT_DAILY_MOVES`)
+rather than spending the API's. The pages apply each move locally first and
+reconcile with the response, so play stays immediate.
 
 Scores are stored per day and **not** per account — guests are on the board too.
 Rows carry the display name as it was at the time, are deleted after
 `DAILY_SCORE_DAYS`, and go immediately if the account behind them is deleted.
 
 Dailies filter the pool harder than the live game does: a 20-second round can
-afford "Nine Inch Nails discography", a whole day cannot. The lead's
-pronunciation apparatus is stripped too (`stripPronunciation` in
-`game/extract.js`) — a lead that opens `Czechoslovakia (/ˌtʃɛkoʊsloʊˈvæki.ə/
-CHEK-oh-sloh-VAK-ee-ə; Czech: Československo)` spells the answer out twice over
-right beside the blank.
+afford "Nine Inch Nails discography", a whole day cannot. All three draw from
+the party tier — a scrambled picture of somewhere nobody has heard of is sixteen
+brown squares, and nine obscure articles is not a hard matchup but an impossible
+one. For Wikidle the lead's pronunciation apparatus is stripped too
+(`stripPronunciation` in `game/extract.js`) — a lead that opens `Czechoslovakia
+(/ˌtʃɛkoʊsloʊˈvæki.ə/ CHEK-oh-sloh-VAK-ee-ə; Czech: Československo)` spells the
+answer out twice over right beside the blank.
 
 ## Matchmaking
 

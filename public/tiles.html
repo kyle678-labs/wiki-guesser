@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Wikidle — the daily Wikipedia guessing puzzle</title>
-<meta name="description" content="One Wikipedia article a day. Start with four words and name it — every wrong guess reveals one more. New puzzle at midnight UTC." />
+<title>Wikitile — the daily Wikipedia picture scramble</title>
+<meta name="description" content="One Wikipedia picture a day, cut into sixteen tiles and scrambled. Tap to turn a tile, drag to swap two. Fewest moves wins. New puzzle at midnight UTC." />
 <script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/styles.css" />
 </head>
@@ -19,8 +19,8 @@
 
   <div class="container">
     <header class="hero">
-      <h1>Wikidle</h1>
-      <p class="tagline">One article a day. You get four words — name it. Every wrong guess buys you one more word.</p>
+      <h1>Wikitile</h1>
+      <p class="tagline">One Wikipedia picture a day, in sixteen pieces and all the wrong way up. Put it back together in as few moves as you can.</p>
       <p class="hint" id="daily-reset">Loading today's puzzle…</p>
     </header>
 
@@ -29,37 +29,31 @@
 
     <div class="ad-slot" data-ad="top">Ad space</div>
 
-    <div class="card" id="daily-card">
-      <div id="daily-clue" class="clue-text daily-clue">Loading…</div>
-
-      <div class="share-row" id="daily-guess-row">
-        <input type="text" id="daily-guess" maxlength="80" placeholder="Which article is this?" autocomplete="off" />
-        <button class="primary" id="daily-submit">Guess</button>
-      </div>
-      <p class="hint" id="daily-status"></p>
-
-      <div id="daily-result" class="hidden"></div>
-      <div id="daily-guesses" class="daily-guesses"></div>
+    <div class="card">
+      <!-- Filled by tiles.js: sixteen buttons, one per slot. -->
+      <div class="tile-board" id="tile-board" aria-label="Picture tiles"></div>
+      <p class="hint" id="tile-status">Loading…</p>
+      <div id="tile-result" class="hidden"></div>
     </div>
 
     <h2 class="section-title">Today's board</h2>
     <div class="card">
       <table class="board">
-        <thead><tr><th>#</th><th>Player</th><th>Guesses</th></tr></thead>
-        <tbody id="daily-board"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+        <thead><tr><th>#</th><th>Player</th><th id="tile-unit">Moves</th></tr></thead>
+        <tbody id="tile-leaderboard"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
       </table>
-      <p class="hint" id="daily-me"></p>
+      <p class="hint" id="tile-me"></p>
     </div>
 
     <h2 class="section-title">How it works</h2>
     <div class="card">
       <ol style="margin-left:1.2rem; display:flex; flex-direction:column; gap:0.4rem;">
-        <li>Everyone gets the same article each day. It changes at midnight UTC.</li>
-        <li>You start with the first four words of its opening — with the article's own name blanked out.</li>
-        <li>Guess wrong and one more word appears. Your score is how many guesses it took, so lower is better.</li>
-        <li>Near-misses count: a typo or a missing accent will still be accepted.</li>
+        <li>Everyone gets the same picture, cut the same way, scrambled the same way. It changes at midnight UTC.</li>
+        <li><strong>Tap a tile</strong> to turn it a quarter turn clockwise.</li>
+        <li><strong>Drag a tile onto another</strong> to swap the two. On a keyboard, the arrow keys swap the focused tile with its neighbour.</li>
+        <li>Each turn and each swap is one move. Your score is how many moves it took, so lower is better — <em>par</em> is the fewest possible.</li>
         <li>Nothing is timed — take as long as you like. Equal scores are ranked by who got there first.</li>
-        <li>One attempt per day.</li>
+        <li>We only tell you what the picture was once you've finished it. One attempt per day.</li>
       </ol>
     </div>
   </div>
@@ -72,6 +66,6 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/common.js"></script>
-  <script src="/js/daily.js"></script>
+  <script src="/js/tiles.js"></script>
 </body>
 </html>
