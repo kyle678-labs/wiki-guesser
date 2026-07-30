@@ -321,12 +321,19 @@ function warmCategoryCounts() {
 // stmtCacheSize likewise: the cache being bounded is a property nothing else can
 // observe — a leaking cache returns identical rows and fails no other assertion —
 // so the only way to keep the regression out is to measure it directly.
+// openPool hands the read-only pool connection to the daily puzzles, which run
+// their own deterministic queries against it. Deliberately the SAME connection
+// rather than a second one: better-sqlite3 keeps the file's pages in this
+// process's cache, and a second handle would double that for no benefit. It
+// throws when there is no pool on disk, exactly as it does here — callers are
+// expected to degrade rather than let that escape.
 module.exports = {
   fetchMystery,
   warmPartyIndex,
   pickFromIndex,
   categoryCounts,
   warmCategoryCounts,
+  openPool: open,
   STMT_CACHE_MAX,
   stmtCacheSize: () => stmtCache.size,
 };

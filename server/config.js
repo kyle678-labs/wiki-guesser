@@ -139,6 +139,10 @@ const config = {
     purgeEnabled: process.env.INACTIVE_PURGE !== "false",
     inactiveMonths: parseInt(process.env.INACTIVE_PURGE_MONTHS, 10) || 24,
     intervalMs: parseInt(process.env.INACTIVE_PURGE_INTERVAL_MS, 10) || 24 * 60 * 60 * 1000,
+    // Daily boards are a scoreboard for one day, not a history — and every row
+    // carries a display name. Swept on the same schedule as dormant accounts.
+    // Keep in step with the retention table in public/privacy.html.
+    dailyScoreDays: parseInt(process.env.DAILY_SCORE_DAYS, 10) || 30,
   },
 
   // A signed-in player legitimately has a tab or two open; nobody needs six.

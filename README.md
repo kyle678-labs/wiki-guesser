@@ -9,6 +9,7 @@ from its article — before the timer runs out. Highest total after all rounds w
 - **Ranked matches** — random 1-on-1 matchmaking with an Elo ladder and tiers.
 - **Casual quick match** — instant random matchup, no rating on the line (guests welcome).
 - **Private rooms** — create a room, share a link, play with up to 8 friends.
+- **Wikidle** — a daily solo puzzle at `/daily`, same article for everyone, with its own leaderboard.
 - **Ads** — optional Google AdSense slots to cover server costs.
 
 Built with Node + Express + Socket.IO and SQLite. The answer and scoring live on
@@ -47,6 +48,7 @@ the code in the other to try a full multiplayer round.
 | `INACTIVE_PURGE_MONTHS` / `INACTIVE_PURGE_INTERVAL_MS` / `INACTIVE_PURGE` | Automatic deletion of dormant accounts. Keep the months in step with `public/privacy.html`. |
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
+| `DAILY_SCORE_DAYS` | How long daily puzzle scores are kept (default 30). Each row carries a display name, so keep this equal to the retention stated in public/privacy.html. |
 | `STMT_CACHE_MAX` | How many compiled mystery-pick statements to keep (default 512). One per clue column × exclusion size × category mask, so it is bounded by an LRU rather than left to grow with the number of category combinations players pick. |
 | `LEADERBOARD_TTL_MS` / `METRICS_INTERVAL_MS` | Leaderboard cache TTL; how often the metrics line is logged. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
@@ -238,6 +240,40 @@ Matchmaking queues are split by kind × clue × tier, so you only ever match
 someone who chose the same thing. All of this derives from `RANKED_MODES` /
 `RANKED_TIERS` in `server/ladders.js` — widening ranked is an edit there and
 nowhere else, including the client, which reads the set from `/api/config`.
+
+## Wikidle (the daily puzzle)
+
+`/daily` serves one article a day. You start with the first four words of its
+opening — its own name blanked out — and name it; every wrong guess reveals one
+more word. Your score is how many words it took, so **lower is better**, with the
+solve time as the tie-break.
+
+**The day is UTC.** Local midnight would read more naturally to one player, but
+it makes a shared board incoherent — two people holding "today's" best score on
+different puzzles — and it moves the clock into the client, which is the one
+input a scoreboard must not trust.
+
+**Nothing schedules the puzzles.** The day plus the game id hash into a seed
+(`server/game/daily.js`), and that seed drives the same indexed `rnd` walk
+`pool.js` already uses for random picks. The pool is read-only, so the same day
+always resolves to the same article, on every instance, forever — with no table
+of upcoming puzzles to maintain or get out of sync.
+
+**The server holds everything worth lying about**: the answer, the words you
+have not earned, the guess count, and the clock (started when the puzzle is
+handed out, not when the browser says so). The page is only ever sent the words
+already revealed, so there is nothing in it to read ahead to.
+
+Scores are stored per day and **not** per account — guests are on the board too.
+Rows carry the display name as it was at the time, are deleted after
+`DAILY_SCORE_DAYS`, and go immediately if the account behind them is deleted.
+
+Dailies filter the pool harder than the live game does: a 20-second round can
+afford "Nine Inch Nails discography", a whole day cannot. The lead's
+pronunciation apparatus is stripped too (`stripPronunciation` in
+`game/extract.js`) — a lead that opens `Czechoslovakia (/ˌtʃɛkoʊsloʊˈvæki.ə/
+CHEK-oh-sloh-VAK-ee-ə; Czech: Československo)` spells the answer out twice over
+right beside the blank.
 
 ## Matchmaking
 

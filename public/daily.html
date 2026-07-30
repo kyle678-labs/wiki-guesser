@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wikidle — the daily Wikipedia guessing puzzle</title>
+<meta name="description" content="One Wikipedia article a day. Start with four words and name it — every wrong guess reveals one more. New puzzle at midnight UTC." />
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand"><a href="/">Wiki-Guesser</a></div>
+    <div class="nav-right">
+      <button class="theme-toggle" data-theme-toggle title="Toggle theme">Theme</button>
+      <span class="nav-right" id="user-pill"></span>
+    </div>
+  </nav>
+
+  <div class="container">
+    <header class="hero">
+      <h1>Wikidle</h1>
+      <p class="tagline">One article a day. You get four words — name it. Every wrong guess buys you one more word.</p>
+      <p class="hint" id="daily-reset">Loading today's puzzle…</p>
+    </header>
+
+    <div class="ad-slot" data-ad="top">Ad space</div>
+
+    <div class="card" id="daily-card">
+      <div id="daily-clue" class="clue-text daily-clue">Loading…</div>
+
+      <div class="share-row" id="daily-guess-row">
+        <input type="text" id="daily-guess" maxlength="80" placeholder="Which article is this?" autocomplete="off" />
+        <button class="primary" id="daily-submit">Guess</button>
+      </div>
+      <p class="hint" id="daily-status"></p>
+
+      <div id="daily-result" class="hidden"></div>
+      <div id="daily-guesses" class="daily-guesses"></div>
+    </div>
+
+    <h2 class="section-title">Today's board</h2>
+    <div class="card">
+      <table class="board">
+        <thead><tr><th>#</th><th>Player</th><th>Words</th><th>Time</th></tr></thead>
+        <tbody id="daily-board"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+      </table>
+      <p class="hint" id="daily-me"></p>
+    </div>
+
+    <h2 class="section-title">How it works</h2>
+    <div class="card">
+      <ol style="margin-left:1.2rem; display:flex; flex-direction:column; gap:0.4rem;">
+        <li>Everyone gets the same article each day. It changes at midnight UTC.</li>
+        <li>You start with the first four words of its opening — with the article's own name blanked out.</li>
+        <li>Guess wrong and one more word appears. Your score is how many words it took, so lower is better.</li>
+        <li>Near-misses count: a typo or a missing accent will still be accepted.</li>
+        <li>One attempt per day, and the clock starts when the puzzle loads.</li>
+      </ol>
+    </div>
+  </div>
+
+  <footer>
+    <p><a href="/">Play the multiplayer game</a> · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></p>
+    <p>Wiki-Guesser · images &amp; text from <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a>, CC BY-SA.</p>
+    <p class="hint">A fan project — not affiliated with the Wikimedia Foundation.</p>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/daily.js"></script>
+</body>
+</html>

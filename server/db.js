@@ -52,7 +52,39 @@ db.exec(`
     created_at    INTEGER NOT NULL
   );
 
+  -- Daily puzzle results. Deliberately NOT joined to users: guests play the
+  -- dailies too, and a daily board is a scoreboard for one day rather than a
+  -- record attached to an account. The identity column holds the session
+  -- identity id ("u12" for an account, "g_…" for a guest) and exists only to
+  -- enforce one entry per player per day; the name is copied in, because the
+  -- board has to keep reading correctly after that name changes, or after the
+  -- account behind it is gone.
+  --
+  -- (No backticks in this comment on purpose — the whole schema is one
+  -- template literal, and a stray one ends it mid-statement.)
+  --
+  -- Convention across every daily game: LOWER score is better (words revealed,
+  -- moves taken), with the server-measured solve time as the tie-break.
+  CREATE TABLE IF NOT EXISTS daily_scores (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    day         TEXT NOT NULL,              -- "YYYY-MM-DD", always UTC
+    game        TEXT NOT NULL,              -- 'wikidle' | …
+    identity    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    score       INTEGER NOT NULL,
+    ms          INTEGER NOT NULL,           -- server-measured, not client-reported
+    created_at  INTEGER NOT NULL,
+    UNIQUE(day, game, identity)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_ratings_mode_rating ON ratings(mode, rating DESC);
+
+  -- Exactly the shape the board is read in: one day, one game, best first.
+  CREATE INDEX IF NOT EXISTS idx_daily_board ON daily_scores(day, game, score, ms);
+  -- Account erasure has to find a player's rows by identity, and the retention
+  -- sweep has to find every row older than a cutoff.
+  CREATE INDEX IF NOT EXISTS idx_daily_identity ON daily_scores(identity);
+  CREATE INDEX IF NOT EXISTS idx_daily_day ON daily_scores(day);
 
   -- Both sides are queried: the profile page pulls a player's own history, and
   -- account deletion has to find every match they appear in.
@@ -141,6 +173,29 @@ const stmts = {
      ORDER BY m.created_at DESC, m.id DESC
      LIMIT @limit
   `),
+  // INSERT OR IGNORE, because the UNIQUE(day, game, identity) constraint IS the
+  // one-attempt-per-day rule. Enforcing it in the schema rather than with a
+  // read-then-write means two requests racing cannot both slip through.
+  insertDailyScore: db.prepare(`
+    INSERT OR IGNORE INTO daily_scores (day, game, identity, name, score, ms, created_at)
+    VALUES (@day, @game, @identity, @name, @score, @ms, @created_at)
+  `),
+  dailyBoard: db.prepare(`
+    SELECT name, score, ms, created_at
+      FROM daily_scores
+     WHERE day = @day AND game = @game
+     ORDER BY score ASC, ms ASC, created_at ASC
+     LIMIT @limit
+  `),
+  dailyEntry: db.prepare("SELECT * FROM daily_scores WHERE day = ? AND game = ? AND identity = ?"),
+  dailyRank: db.prepare(`
+    SELECT COUNT(*) AS ahead
+      FROM daily_scores
+     WHERE day = @day AND game = @game
+       AND (score < @score OR (score = @score AND ms < @ms))
+  `),
+  deleteDailyForIdentity: db.prepare("DELETE FROM daily_scores WHERE identity = ?"),
+  deleteDailyBefore: db.prepare("DELETE FROM daily_scores WHERE day < ?"),
   deleteRatings: db.prepare("DELETE FROM ratings WHERE user_id = ?"),
   deleteMatches: db.prepare("DELETE FROM matches WHERE a_user_id = ? OR b_user_id = ?"),
   deleteUser: db.prepare("DELETE FROM users WHERE id = ?"),
@@ -365,8 +420,13 @@ const deleteAccountTx = db.transaction((userId) => {
   // `users`, and foreign_keys is ON.
   const matches = stmts.deleteMatches.run(userId, userId).changes;
   const ratings = stmts.deleteRatings.run(userId).changes;
+  // Daily results have no foreign key — guests earn them too — so nothing would
+  // have cascaded here. They still carry a display name, which makes them the
+  // player's data and squarely inside what the privacy policy promises to
+  // erase. Matched on the identity string an account resolves to.
+  const dailies = stmts.deleteDailyForIdentity.run(`u${userId}`).changes;
   const users = stmts.deleteUser.run(userId).changes;
-  return { matches, ratings, deleted: users > 0 };
+  return { matches, ratings, dailies, deleted: users > 0 };
 });
 
 function deleteAccount(userId) {
@@ -390,8 +450,41 @@ function purgeInactiveAccounts(months = 24) {
   return { accounts: stale.length, matches, cutoff };
 }
 
+// ── Daily puzzles ────────────────────────────────────────────────────────────
+// One result per player per day, and the UNIQUE constraint is what decides it
+// rather than a read-then-write: a player finishing in two tabs at once gets
+// one row either way, and it is the first — which is also the honest one, since
+// the clock started when the server handed the puzzle out.
+
+function recordDailyScore(entry) {
+  const info = stmts.insertDailyScore.run({ ...entry, created_at: Date.now() });
+  return info.changes > 0; // false: they had already finished this one today
+}
+
+const getDailyEntry = (day, game, identity) => stmts.dailyEntry.get(day, game, identity) || null;
+const getDailyLeaderboard = (day, game, limit = 25) => stmts.dailyBoard.all({ day, game, limit });
+
+// Where a result sits on the day's board, 1-based. Counted rather than found by
+// scanning the board, so a player outside the visible top N still learns their
+// placing.
+const getDailyRank = (day, game, score, ms) => stmts.dailyRank.get({ day, game, score, ms }).ahead + 1;
+
+// A daily board is a scoreboard for one day, not a history. Keeping rows past
+// their day serves nobody and quietly accumulates display names, so they are
+// swept on the same schedule as dormant accounts. Keep this in step with the
+// retention table in public/privacy.html.
+function purgeOldDailyScores(days = 30) {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return stmts.deleteDailyBefore.run(cutoff).changes;
+}
+
 module.exports = {
   db,
+  recordDailyScore,
+  getDailyEntry,
+  getDailyLeaderboard,
+  getDailyRank,
+  purgeOldDailyScores,
   upsertOAuthUser,
   getUserById,
   getRating,

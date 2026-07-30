@@ -25,6 +25,7 @@ const log = require("./log");
 const metrics = require("./metrics");
 const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
+const { router: dailyRouter } = require("./dailies");
 const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
@@ -336,6 +337,9 @@ function buildServer(overrides = {}) {
   });
 
   app.use(authRouter);
+  // After the /api rate limiter above, so daily traffic is budgeted like the
+  // rest of the API rather than being an unmetered way in.
+  app.use(dailyRouter);
 
   // ── Static site ───────────────────────────────────────────────────────────────
   const publicDir = path.join(__dirname, "..", "public");

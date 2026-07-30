@@ -2,7 +2,7 @@
 
 const config = require("./config");
 const log = require("./log");
-const { db, purgeInactiveAccounts } = require("./db");
+const { db, purgeInactiveAccounts, purgeOldDailyScores } = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
 const { warmPartyIndex, warmCategoryCounts } = require("./game/pool");
@@ -48,6 +48,13 @@ function runRetentionSweep() {
     const res = purgeInactiveAccounts(months);
     if (res.accounts > 0) log.warn("inactive_accounts_purged", { months, ...res });
     else log.info("inactive_accounts_purged", { months, ...res });
+
+    // Daily boards expire on their own schedule — far shorter, because a day's
+    // scoreboard stops meaning anything the moment the day does, and each row
+    // holds a display name.
+    const days = config.retention.dailyScoreDays;
+    const rows = purgeOldDailyScores(days);
+    log.info("daily_scores_purged", { days, rows });
   } catch (err) {
     log.error("retention_sweep_failed", { err });
   }

@@ -96,6 +96,19 @@
         ranking. Casual and private-room games are not recorded.
       </p>
 
+      <h3>Daily puzzle scores</h3>
+      <p>
+        If you finish a <em>daily</em> puzzle, we store one row for that day: your display name at the time, how many
+        words it took, how long it took, and which day it was. Guests are included — the daily leaderboard is open to
+        everyone, so it is not tied to having an account.
+      </p>
+      <p>
+        The row records the name as it was when you played, so the board keeps reading correctly afterwards. It is
+        <strong>not</strong> a history: daily scores are deleted automatically after 30 days, because a scoreboard for
+        one day stops meaning anything once the day has passed. If you have an account and delete it, your daily
+        scores go with it immediately, along with everything else.
+      </p>
+
       <h3>Chat messages</h3>
       <p>
         Chat is relayed in memory to the other players in your room and <strong>is not written to a database or log
@@ -203,6 +216,7 @@
           <tr><td>Server logs containing IP addresses</td><td>30 days, then deleted automatically</td></tr>
           <tr><td>Rate-limit counters</td><td>Held in memory only; gone on restart</td></tr>
           <tr><td>Account profile, ratings and match history</td><td>Until you delete it — there is a button in your profile — or after 24 months of inactivity, whichever comes first. The inactivity sweep runs automatically every day.</td></tr>
+          <tr><td>Daily puzzle scores (including guest names)</td><td>30 days, then deleted automatically. Deleting your account removes yours immediately.</td></tr>
           <tr><td>Chat messages</td><td>Not stored at all — except the one case in the row below</td></tr>
           <tr><td>A chat message someone reported</td><td>Kept in our server logs, then deleted automatically after 30 days</td></tr>
         </tbody>
@@ -228,7 +242,8 @@
       </p>
       <p>
         That erases, in a single database transaction: your profile row (provider, provider ID, display name, avatar
-        URL, signup date), every ladder rating and win/loss record you hold, and every ranked match you played. Because
+        URL, signup date), every ladder rating and win/loss record you hold, every ranked match you played, and every
+        daily puzzle score standing in your name — which also takes you off any daily leaderboard you were on. Because
         a match record names <em>both</em> players, deleting yours also removes those games from your opponents'
         histories — we would rather shorten someone's match list than keep your game record against your wishes. Their
         own rating and win/loss totals are stored separately and are not affected.

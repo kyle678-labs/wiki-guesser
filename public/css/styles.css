@@ -447,3 +447,56 @@ button.tiny { font-size: 0.72rem; padding: 0.15rem 0.45rem; }
 /* Selected categories carry a check as well as the accent border, so the state
    does not depend on colour alone. */
 .cat-opt.on .cat-name::before { content: "✓ "; }
+
+/* An anchor that looks like a primary button. The daily entry point is a real
+   link rather than a button with an onclick, so it can be middle-clicked,
+   opened in a new tab and read as navigation by a screen reader — but the
+   button rules above are scoped to `button`, so it needs its own. */
+a.btn-link {
+  display: inline-block;
+  font-family: var(--font-sans); font-weight: 600;
+  background: var(--progressive); border: 1px solid var(--progressive); color: #fff;
+  border-radius: 2px; padding: 0.5rem 1rem;
+  transition: background 0.1s, border-color 0.1s;
+}
+a.btn-link:hover { background: var(--progressive-hover); border-color: var(--progressive-hover); color: #fff; }
+
+/* ── Daily puzzle (Wikidle) ───────────────────────────────────────────────────
+   The clue is the whole game, so it gets the serif treatment and room to
+   breathe. Everything else on the page stays deliberately quiet around it. */
+.daily-clue {
+  min-height: 6rem; padding: 0.4rem 0 1rem;
+  border-bottom: 1px solid var(--border-light); margin-bottom: 1rem;
+}
+/* The gap where the article's own name was. Marked rather than left as bare
+   underscores so it reads as "something is missing here" at a glance. */
+.daily-blank {
+  color: var(--score); font-weight: 700; letter-spacing: 0.05em;
+  background: var(--bg3); padding: 0 0.2em; border-radius: 2px;
+}
+/* Trailing ellipsis: a standing reminder that the article continues, and that
+   a wrong guess is what buys the next word. */
+.daily-more { color: var(--muted); }
+
+.daily-guesses { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 1rem; }
+.daily-guess {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.7rem;
+  border: 1px solid var(--border-light); border-radius: 2px;
+  padding: 0.45rem 0.7rem; background: var(--bg);
+}
+.daily-guess.miss { color: var(--muted); }
+.daily-guess.hit { border-color: var(--green); color: var(--green); font-weight: 600; }
+.daily-mark { font-variant-numeric: tabular-nums; }
+
+.daily-win { color: var(--green); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
+.daily-lose { color: var(--score); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
+
+/* The board is short and read at a glance, so the numeric columns are tabular
+   to stop ranks and times jittering as they update. */
+#daily-board td:first-child, #daily-board td:nth-child(3), #daily-board td:nth-child(4) {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .daily-clue { font-size: 1.15rem; }
+}
