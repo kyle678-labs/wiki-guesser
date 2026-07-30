@@ -265,10 +265,43 @@ function recordRankedMatch(result) {
 const TOUCH_THROTTLE_MS = 60 * 60 * 1000;
 const lastTouched = new Map(); // userId -> ms
 
+// Once an entry is older than the throttle window it can never suppress a write
+// again — it is pure overhead, and nothing removed it, so the map grew with
+// every distinct player the process had ever seen and only ever shrank when
+// somebody deleted their account.
+//
+// Swept on write rather than on a timer: the map only grows on activity, so the
+// cleanup happens exactly when it is needed and an idle server does no work at
+// all. Deleting from a Map while iterating it is well-defined.
+//
+// BOTH guards are load-bearing. Size alone is not enough: a map that is large
+// but entirely fresh — which is simply what a busy server looks like — sweeps,
+// deletes nothing, and then sweeps again on the very next call, turning every
+// page load into an O(n) walk. That is a worse problem than the leak, and it
+// arrives precisely under the load where it hurts. The interval caps the scan
+// at once per five minutes however busy things get.
+//
+// Note what this does NOT do: it never evicts a fresh entry. The map still
+// holds one entry per user active in the last hour, because those are the ones
+// doing their job. Bounding it to the live working set is the whole fix.
+const TOUCH_SWEEP_AT = parseInt(process.env.TOUCH_SWEEP_AT, 10) || 10000;
+const TOUCH_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let lastSweptAt = 0;
+
+function sweepTouched(now) {
+  for (const [id, at] of lastTouched) {
+    if (now - at >= TOUCH_THROTTLE_MS) lastTouched.delete(id);
+  }
+  lastSweptAt = now;
+}
+
 function touchSeen(userId) {
   const now = Date.now();
   const prev = lastTouched.get(userId);
   if (prev && now - prev < TOUCH_THROTTLE_MS) return;
+  if (lastTouched.size >= TOUCH_SWEEP_AT && now - lastSweptAt >= TOUCH_SWEEP_INTERVAL_MS) {
+    sweepTouched(now);
+  }
   lastTouched.set(userId, now);
   try {
     stmts.touchSeen.run({ id: userId, now });
@@ -358,4 +391,10 @@ module.exports = {
   getRecentMatches,
   deleteAccount,
   purgeInactiveAccounts,
+  // Exported for tests. The activity map is internal state that no query or
+  // response reveals, so a leak in it is invisible from the outside — and
+  // sweepTouched takes `now` as an argument precisely so a test can advance the
+  // clock past the throttle window without mocking timers.
+  sweepTouched,
+  touchedSize: () => lastTouched.size,
 };

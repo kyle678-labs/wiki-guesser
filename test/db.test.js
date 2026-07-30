@@ -9,7 +9,16 @@ process.env.NODE_ENV = "test";
 process.env.SESSION_SECRET = "test-secret";
 process.env.DATA_DIR = helpers.tempDataDir();
 
-const { upsertOAuthUser, getRating, getUserRatings, recordRankedMatch, getLeaderboard } = require("../server/db");
+const {
+  upsertOAuthUser,
+  getRating,
+  getUserRatings,
+  recordRankedMatch,
+  getLeaderboard,
+  touchSeen,
+  sweepTouched,
+  touchedSize,
+} = require("../server/db");
 const { updatePair } = require("../server/elo");
 const { ladderKey } = require("../server/ladders");
 
@@ -93,4 +102,44 @@ test("the leaderboard is cached, and a new result invalidates it", () => {
     eRatingBefore,
     "the fresh read reflects the rating that just changed"
   );
+});
+
+// ── Activity map ─────────────────────────────────────────────────────────────
+// touchSeen throttles last_seen writes through an in-memory map, which used to
+// keep one entry per user the process had EVER seen. Nothing about that is
+// visible from a query or a response, so it has to be measured directly.
+
+test("the activity map drops entries the throttle window has expired", () => {
+  const before = touchedSize();
+  const users = [];
+  for (let i = 0; i < 25; i++) {
+    users.push(upsertOAuthUser({ provider: "sweep", providerId: `sweep-${i}`, displayName: `Sweep ${i}` }));
+  }
+  for (const u of users) touchSeen(u.id);
+  assert.equal(touchedSize(), before + 25, "each user should hold one entry while it is fresh");
+
+  // A sweep at the current time must keep everything: these entries are all
+  // doing their job, and evicting them would restore the write-per-page-view
+  // amplification the throttle exists to prevent.
+  sweepTouched(Date.now());
+  assert.equal(touchedSize(), before + 25, "fresh entries must survive a sweep");
+
+  // Advance past the throttle window. Now they can never suppress a write
+  // again, so they are pure overhead and must go.
+  sweepTouched(Date.now() + 60 * 60 * 1000 + 1);
+  assert.equal(touchedSize(), 0, "expired entries must be released");
+});
+
+test("a swept user is touched again rather than being silently skipped", () => {
+  const u = upsertOAuthUser({ provider: "sweep", providerId: "sweep-revisit", displayName: "Revisit" });
+  touchSeen(u.id);
+  sweepTouched(Date.now() + 60 * 60 * 1000 + 1);
+  assert.equal(touchedSize(), 0);
+
+  // The point of the map is throttling, not correctness: losing an entry must
+  // cost an extra write, never a missed one. A user whose entry was swept has
+  // to be re-registered on their next visit or the inactivity purge would
+  // eventually delete an active account.
+  touchSeen(u.id);
+  assert.equal(touchedSize(), 1, "a returning user re-enters the map");
 });
