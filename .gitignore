@@ -14,7 +14,10 @@ data/
 # .terraform.lock.hcl
 *.tfstate
 *.tfstate.*
-*.tfvars
+# Trailing * on purpose: "*.tfvars" only matches names ENDING in .tfvars, so an
+# editor swapfile or a hand-made terraform.tfvars.bak — both full of the same
+# OAuth secrets — sailed straight past it and showed up as untracked.
+*.tfvars*
 !*.tfvars.example
 crash.log
 
