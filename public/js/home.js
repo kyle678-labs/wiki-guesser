@@ -73,7 +73,19 @@
   document.getElementById("btn-ranked").addEventListener("click", async () => {
     const user = await WG.ensureUser({ rankedRequired: true });
     if (!user) return;
-    if (!user.ranked) return WG.toast("Ranked needs a Google or Discord account.");
+    // A player who already has a guest session never sees the auth modal —
+    // ensureUser returns their existing identity — so this is the only place
+    // that tells them why ranked is refusing them. It has to distinguish "get an
+    // account" from "there is no account to get", or it sends someone off to
+    // find a sign-in button that isn't rendered.
+    if (!user.ranked) {
+      const p = (WG.getConfig() && WG.getConfig().providers) || {};
+      return WG.toast(
+        p.google || p.discord
+          ? "Ranked needs a Google or Discord account."
+          : "Ranked sign-in is unavailable right now — casual and private rooms are still open."
+      );
+    }
     WG.renderUserPill(document.getElementById("user-pill"));
     const clue = await WG.chooseMode({ title: "Ranked match", subtitle: "Pick a clue type." });
     if (!clue) return;

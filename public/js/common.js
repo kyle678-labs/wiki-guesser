@@ -106,22 +106,34 @@ const WG = (() => {
   function showAuthModal({ rankedRequired = false } = {}) {
     return new Promise((resolve) => {
       const providers = (config && config.providers) || {};
+      // No provider configured means nobody can sign in at all. That is an
+      // operator state, and a player is owed what it means for them — not the
+      // name of an environment variable they cannot set. Whatever this renders,
+      // it must never be a dead end: with `rankedRequired` the guest form is
+      // deliberately absent, so if there is also nothing to sign in with, the
+      // copy has to point at what still works.
+      const canSignIn = Boolean(providers.google || providers.discord);
+      const subtitle = rankedRequired
+        ? canSignIn
+          ? "Ranked matches need an account so your rating sticks."
+          : "Ranked sign-in is unavailable right now, so ranked matches can't be started."
+        : canSignIn
+          ? "Sign in to climb the ranked ladder, or play as a guest."
+          : "Pick a display name and jump straight in.";
       const back = document.createElement("div");
       back.className = "modal-backdrop";
       back.innerHTML = `
         <div class="card modal">
           <h2>Jump in</h2>
-          <p class="muted">${rankedRequired
-            ? "Ranked matches need an account so your rating sticks."
-            : "Sign in to climb the ranked ladder, or play as a guest."}</p>
+          <p class="muted">${subtitle}</p>
           <div class="auth-btns">
             ${providers.google ? `<button class="btn-oauth btn-google" data-go="/auth/google">Continue with Google</button>` : ""}
             ${providers.discord ? `<button class="btn-oauth btn-discord" data-go="/auth/discord">Continue with Discord</button>` : ""}
-            ${(!providers.google && !providers.discord)
-              ? `<p class="hint">OAuth isn't configured yet — set GOOGLE_/DISCORD_ keys in .env to enable ranked accounts.</p>` : ""}
+            ${!canSignIn && rankedRequired
+              ? `<p class="hint">Casual quick match and private rooms are still open to guests — close this and pick one of those.</p>` : ""}
           </div>
           ${rankedRequired ? "" : `
-            <div class="divider">or play as a guest</div>
+            ${canSignIn ? `<div class="divider">or play as a guest</div>` : ""}
             <div class="share-row">
               <input id="guest-name" type="text" maxlength="20" placeholder="Pick a display name" />
               <button class="primary" id="guest-go">Go</button>
