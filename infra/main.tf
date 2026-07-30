@@ -258,9 +258,26 @@ resource "aws_iam_role_policy_attachment" "cw_agent" {
 
 data "aws_iam_policy_document" "app" {
   statement {
-    sid       = "ReadOwnParameters"
-    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-    resources = ["arn:aws:ssm:${var.aws_region}:*:parameter${local.ssm_prefix}/*"]
+    sid     = "ReadOwnParameters"
+    actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+
+    # BOTH ARNs are required, and the first one is the non-obvious half.
+    # GetParameter/GetParameters authorize against the individual parameter
+    # (…:parameter/wiki-guesser/SESSION_SECRET), which the wildcard below
+    # covers. GetParametersByPath authorizes against the PATH BEING QUERIED
+    # (…:parameter/wiki-guesser) — a resource the wildcard does not match,
+    # because there is no trailing segment after the prefix.
+    #
+    # Getting this wrong fails only at boot, and fails late: the bootstrap
+    # writes an env file with no SESSION_SECRET, hits its own FATAL guard, and
+    # exits under `set -e` before systemd, Caddy or the CloudWatch agent are
+    # installed. The instance comes up healthy by every AWS measure and serves
+    # nothing, with the logs explaining why still on local disk because the log
+    # shipper was one of the things that never got installed.
+    resources = [
+      "arn:aws:ssm:${var.aws_region}:*:parameter${local.ssm_prefix}",
+      "arn:aws:ssm:${var.aws_region}:*:parameter${local.ssm_prefix}/*",
+    ]
   }
 
   statement {
