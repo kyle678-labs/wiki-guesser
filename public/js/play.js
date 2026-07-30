@@ -14,6 +14,10 @@
   let myId = WG.getUser() && WG.getUser().id;
   let timerHandle = null;
   let submitted = false;
+  // What the invite buttons copy. Taken from the room's own state rather than
+  // from `code` above, which is only what was typed into the address bar.
+  let roomCode = "";
+  let inviteUrl = "";
 
   // Need an identity before we can join.
   let user = WG.getUser();
@@ -264,7 +268,10 @@
       // pool is fixed by the queue.
       $("cat-picker").classList.toggle("hidden", !state.isPrivate);
       if (state.isPrivate) {
-        $("share-link").value = `${location.origin}/room/${state.code}`;
+        roomCode = state.code;
+        inviteUrl = `${location.origin}/room/${state.code}`;
+        $("room-code").textContent = roomCode;
+        $("share-link").textContent = inviteUrl;
         $("set-rounds").value = String(state.settings.rounds);
         $("set-mode").value = state.settings.mode;
         $("set-clue").value = state.settings.clue || "image";
@@ -424,10 +431,26 @@
   $("set-mode").addEventListener("change", (e) => WG.emit("room:settings", { mode: e.target.value }));
   $("set-clue").addEventListener("change", (e) => WG.emit("room:settings", { clue: e.target.value }));
 
-  $("btn-copy").addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText($("share-link").value); WG.toast("Link copied!"); }
-    catch { $("share-link").select(); }
-  });
+  // Copy the code or the whole link. Where the clipboard is refused — an
+  // insecure origin, a browser that wants a permission first — the text is
+  // selected instead, so the player can still take it manually rather than
+  // being left with a button that silently does nothing.
+  async function copyInvite(text, el, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      WG.toast(`${label} copied!`);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      WG.toast("Couldn't copy — it's selected, so press Ctrl+C.");
+    }
+  }
+
+  $("btn-copy").addEventListener("click", () => copyInvite(inviteUrl, $("share-link"), "Invite link"));
+  $("btn-copy-code").addEventListener("click", () => copyInvite(roomCode, $("room-code"), "Room code"));
 
   $("btn-leave").addEventListener("click", () => { WG.emit("room:leave"); window.location = "/"; });
 

@@ -68,12 +68,23 @@
              a matchmaking room has nobody to invite, and its settings are fixed
              by the queue its players chose. -->
         <div class="card lobby-box hidden" id="lobby-box">
+          <!-- The code is the thing people actually pass around — read out loud,
+               typed into "Join by code" on the lobby. So it is shown big and is
+               itself the button that copies it. The link is plain wrapping text
+               rather than a read-only input: at sidebar width an input showed
+               about as far as "https://" and looked broken. -->
           <div id="invite-block">
-            <div class="hint">Invite link</div>
-            <div class="share-row">
-              <input type="text" id="share-link" readonly />
-              <button class="primary small" id="btn-copy">Copy</button>
+            <div class="hint">Invite your friends</div>
+            <div class="invite">
+              <button class="invite-code" id="btn-copy-code" title="Copy the room code">
+                <span class="invite-code-label">Room code</span>
+                <span class="invite-code-value" id="room-code">—</span>
+              </button>
+              <!-- The label is broken over two lines to keep the button narrow;
+                   the aria-label is what stops that reading as "Copylink". -->
+              <button class="primary invite-copy" id="btn-copy" aria-label="Copy the invite link">Copy<br />link</button>
             </div>
+            <p class="hint invite-link" id="share-link"></p>
           </div>
           <div class="settings-row" id="host-settings">
             <div class="field">
@@ -93,7 +104,9 @@
                 <option value="60">60 — relaxed</option>
               </select>
             </div>
-            <div class="field">
+            <!-- `wide` on the three with sentence-length options: at sidebar
+                 width they share a row with nothing and clip if they try. -->
+            <div class="field wide">
               <label>Clue</label>
               <select id="set-clue">
                 <option value="image">Pictures</option>
@@ -101,14 +114,14 @@
                 <option value="mixed">Combined</option>
               </select>
             </div>
-            <div class="field">
+            <div class="field wide">
               <label>Difficulty</label>
               <select id="set-mode">
                 <option value="party">Party mix — well-known topics</option>
-                <option value="chaos">Total chaos — broader, still guessable</option>
+                <option value="chaos">Total chaos — broader mix</option>
               </select>
             </div>
-            <div class="field">
+            <div class="field wide">
               <label>Chat</label>
               <select id="set-chat">
                 <option value="true">On</option>

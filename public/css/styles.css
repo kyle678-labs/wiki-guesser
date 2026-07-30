@@ -247,10 +247,40 @@ table.board { width: 100%; border-collapse: collapse; }
 .lobby-box { display: flex; flex-direction: column; gap: 1rem; }
 .share-row { display: flex; gap: 0.5rem; }
 .share-row input { font-weight: 600; letter-spacing: 0.1em; }
+
+/* ── Invite ───────────────────────────────────────────────────────────────────
+   The code, big and copyable, next to a button for the full link. */
+.invite { display: flex; align-items: stretch; gap: 0.5rem; }
+.invite-code {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start;
+  gap: 0.05rem; padding: 0.35rem 0.7rem; cursor: pointer; text-align: left;
+}
+.invite-code-label {
+  font-size: 0.68rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+/* Tabular figures and wide tracking, because this gets read down a phone line
+   as often as it gets clicked. */
+.invite-code-value {
+  font-size: 1.3rem; font-weight: 700; letter-spacing: 0.16em; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.invite-copy { flex: 0 0 auto; font-size: 0.8rem; line-height: 1.2; padding: 0.35rem 0.7rem; }
+/* Long, and in a 300px column. Wrapping is the only honest option — the input
+   this replaced could show about as far as "https://". */
+.invite-link { margin: 0; overflow-wrap: anywhere; }
+
 .settings-row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: end; }
-.field { display: flex; flex-direction: column; gap: 0.25rem; }
+/* min-width: 0 is the load-bearing part. A flex item defaults to min-width:auto,
+   which is its CONTENT's intrinsic width — and a select's intrinsic width is its
+   longest option, sentence and all. That is what pushed the difficulty dropdown
+   ~30px past the edge of a 300px sidebar. Allowing the field to shrink, and
+   sizing the control to the field rather than to its text, means no option
+   label can overflow this card however long it gets. */
+.field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 7rem; min-width: 0; }
+.field.wide { flex-basis: 100%; }
 .field label { font-size: 0.8rem; color: var(--muted); }
-.field select, .field input { width: auto; min-width: 110px; }
+.field select, .field input { width: 100%; min-width: 0; }
 
 .chat { display: flex; flex-direction: column; gap: 0.5rem; }
 .chat-log { height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
