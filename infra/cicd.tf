@@ -43,6 +43,12 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 locals {
   github_oidc_arn = var.github_oidc_provider_arn != "" ? var.github_oidc_provider_arn : aws_iam_openid_connect_provider.github[0].arn
+
+  # Split for the sub-claim patterns below, which need owner and repo
+  # separately in order to place the @<id> wildcards. The variable's validation
+  # guarantees exactly one "/", so these indexes are safe.
+  gh_owner = split("/", var.github_repository)[0]
+  gh_repo  = split("/", var.github_repository)[1]
 }
 
 # ── Deploy document ──────────────────────────────────────────────────────────
@@ -94,12 +100,37 @@ data "aws_iam_policy_document" "github_assume" {
     }
 
     # Tag pushes only. A workflow run on a branch presents
-    # `repo:owner/name:ref:refs/heads/…` and fails this test, so a push to main
-    # cannot deploy even if someone adds a branch trigger to the workflow.
+    # `…:ref:refs/heads/…` and fails this test, so a push to main cannot deploy
+    # even if someone adds a branch trigger to the workflow.
+    #
+    # TWO patterns because GitHub changed this claim's format. It now embeds
+    # immutable numeric IDs for the org and the repo:
+    #
+    #   repo:kyle678-labs@302659241/wiki-guesser@1313637989:ref:refs/tags/v1.0.0
+    #
+    # rather than the `repo:owner/name:ref:…` shown in essentially every guide
+    # written before the change. The IDs exist so that renaming a repo, or
+    # deleting and recreating one under the same name, cannot let a different
+    # repository inherit this trust policy. Matching only the legacy form fails
+    # with "Not authorized to perform sts:AssumeRoleWithWebIdentity" and no
+    # indication of which condition rejected it — the claim that was actually
+    # presented is visible only in CloudTrail.
+    #
+    # Both are listed because values in a StringLike are OR'd, and pinning to
+    # one format would break on whichever way GitHub's rollout lands.
+    #
+    # To harden further, replace the @* wildcards with this repository's real
+    # ids (org 302659241, repo 1313637989). That buys the rename protection the
+    # format was designed for, at the cost of a manual edit if the repo ever
+    # moves. As written, the scope is by owner and repo NAME, which is the same
+    # guarantee this policy had before.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/tags/${var.deploy_tag_pattern}"]
+      values = [
+        "repo:${var.github_repository}:ref:refs/tags/${var.deploy_tag_pattern}",
+        "repo:${local.gh_owner}@*/${local.gh_repo}@*:ref:refs/tags/${var.deploy_tag_pattern}",
+      ]
     }
   }
 }
