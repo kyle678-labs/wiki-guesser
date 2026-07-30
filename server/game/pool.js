@@ -16,7 +16,43 @@ const { buildClue } = require("./extract");
 const { CATEGORIES, BIT, maskFor } = require("./categories");
 
 let db = null;
+
+// ── Prepared-statement cache ─────────────────────────────────────────────────
+// pickRow compiles one statement per (column, exclusion size, category mask).
+// That key space is much larger than it looks: 2 columns × up to 16 exclusion
+// sizes (a game runs at most 15 rounds) × 4096 possible masks (12 categories) —
+// ~131k statements, each holding a compiled SQLite program.
+//
+// Left unbounded that is a slow leak with a player's hand on the tap: a
+// private-room host changing the category selection mints a fresh mask every
+// time, and nothing ever evicted the old one. On a 4 GiB box that is a real
+// memory-exhaustion path rather than a theoretical one.
+//
+// An LRU bounds it without giving up the per-mask query plans pickRow
+// deliberately compiles (see the note there). Real traffic is dominated by
+// mask = 0 — every matchmaking room draws unfiltered, which is 32 keys in
+// total — so the cap only ever evicts the long tail of category combinations,
+// which is exactly what should be dropped. better-sqlite3 finalizes a statement
+// when it is garbage collected, so releasing the reference is the whole of the
+// cleanup; there is nothing to close explicitly.
+const STMT_CACHE_MAX = parseInt(process.env.STMT_CACHE_MAX, 10) || 512;
 const stmtCache = new Map();
+
+// A Map iterates in insertion order, which is all an LRU needs: re-inserting on
+// a hit moves that key to the newest end, so the first key is always the coldest.
+function cachedStmt(key, build) {
+  const hit = stmtCache.get(key);
+  if (hit) {
+    stmtCache.delete(key);
+    stmtCache.set(key, hit);
+    return hit;
+  }
+  const stmt = build();
+  // Evict before inserting, so the cache never exceeds the cap even momentarily.
+  if (stmtCache.size >= STMT_CACHE_MAX) stmtCache.delete(stmtCache.keys().next().value);
+  stmtCache.set(key, stmt);
+  return stmt;
+}
 
 // ── Party-tier in-memory index ───────────────────────────────────────────────
 // pickRow walks the `rnd` index until it finds a row clearing the tier's
@@ -55,8 +91,9 @@ function open() {
 }
 
 // Random row matching the clue type + link threshold, excluding this game's
-// already-used page_ids. Statements are cached per (column, exclusion size)
-// since the NOT IN list length varies round to round.
+// already-used page_ids. Statements are cached per (column, exclusion size,
+// mask) since the NOT IN list length varies round to round, behind the bounded
+// LRU above.
 //
 // Fast random pick: every row has a random rnd ∈ [0,1) with a partial index
 // per clue. We start at a random rnd and take the first indexed row that also
@@ -79,16 +116,14 @@ function pickRow(clue, minPop, used, mask = 0) {
   open();
   const col = clue === "text" ? "opening_text" : "image_url";
   const key = `${col}:${used.size}:${mask}`;
-  let stmt = stmtCache.get(key);
-  if (!stmt) {
+  const stmt = cachedStmt(key, () => {
     const excl = used.size ? ` AND page_id NOT IN (${Array(used.size).fill("?").join(",")})` : "";
     const cat = mask ? ` AND (categories & ${mask}) != 0` : "";
-    stmt = db.prepare(
+    return db.prepare(
       `SELECT page_id, title, image_url, opening_text, freq_json FROM mysteries ` +
         `WHERE ${col} IS NOT NULL${cat} AND popularity >= ? AND rnd >= ?${excl} ORDER BY rnd LIMIT 1`
     );
-    stmtCache.set(key, stmt);
-  }
+  });
   const r = Math.random();
   return stmt.get(minPop, r, ...used) || stmt.get(minPop, 0, ...used);
 }
@@ -282,4 +317,16 @@ function warmCategoryCounts() {
 
 // pickFromIndex is exported for tests: its probe-then-scan fallback is the one
 // piece of non-obvious logic here, and it must never return an already-used page.
-module.exports = { fetchMystery, warmPartyIndex, pickFromIndex, categoryCounts, warmCategoryCounts };
+//
+// stmtCacheSize likewise: the cache being bounded is a property nothing else can
+// observe — a leaking cache returns identical rows and fails no other assertion —
+// so the only way to keep the regression out is to measure it directly.
+module.exports = {
+  fetchMystery,
+  warmPartyIndex,
+  pickFromIndex,
+  categoryCounts,
+  warmCategoryCounts,
+  STMT_CACHE_MAX,
+  stmtCacheSize: () => stmtCache.size,
+};

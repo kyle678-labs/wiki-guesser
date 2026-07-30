@@ -82,7 +82,13 @@ after(() => {
   } catch { /* temp dir */ }
 });
 
-const { fetchMystery, pickFromIndex, categoryCounts } = require("../server/game/pool");
+const {
+  fetchMystery,
+  pickFromIndex,
+  categoryCounts,
+  stmtCacheSize,
+  STMT_CACHE_MAX,
+} = require("../server/game/pool");
 
 // ── Filtering ────────────────────────────────────────────────────────────────
 
@@ -194,6 +200,37 @@ test("a category-filtered pick uses the partial index instead of scanning", () =
 });
 
 // ── Counts ───────────────────────────────────────────────────────────────────
+
+// ── Statement cache ──────────────────────────────────────────────────────────
+// The cache key includes the category mask, and 12 categories means 4096 of
+// them. A cache that never evicts is invisible from a round's results — the
+// rows come back correct either way — so the bound has to be asserted directly
+// or the regression walks straight back in.
+
+test("the statement cache stays bounded as category combinations pile up", async () => {
+  // Each integer selects a distinct subset of CATEGORIES, so every iteration is
+  // a mask the cache has not seen — the same thing a private-room host cycling
+  // the category picker produces, just without the wait.
+  const catsFor = (n) => CATEGORIES.filter((_, i) => (n >> i) & 1);
+  const flood = STMT_CACHE_MAX + 100;
+
+  for (let n = 1; n <= flood; n++) {
+    await fetchMystery("chaos", new Set(), "image", catsFor(n));
+  }
+
+  // Exactly at the cap, not merely under it: `<=` would also pass if eviction
+  // never ran and the cache simply happened to stay small, which is the bug.
+  assert.equal(
+    stmtCacheSize(),
+    STMT_CACHE_MAX,
+    `${flood} distinct masks should leave the cache pinned at its ${STMT_CACHE_MAX} cap`
+  );
+
+  // Eviction must cost correctness nothing: "nature" was cached early and long
+  // since pushed out, so this round recompiles it from scratch.
+  const m = await fetchMystery("chaos", new Set(), "image", ["nature"]);
+  assert.match(m.title, /^Otter /, `got "${m.title}" from a recompiled statement`);
+});
 
 test("category counts report per tier and clue", () => {
   const counts = categoryCounts();

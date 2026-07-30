@@ -47,6 +47,7 @@ the code in the other to try a full multiplayer round.
 | `INACTIVE_PURGE_MONTHS` / `INACTIVE_PURGE_INTERVAL_MS` / `INACTIVE_PURGE` | Automatic deletion of dormant accounts. Keep the months in step with `public/privacy.html`. |
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
+| `STMT_CACHE_MAX` | How many compiled mystery-pick statements to keep (default 512). One per clue column × exclusion size × category mask, so it is bounded by an LRU rather than left to grow with the number of category combinations players pick. |
 | `LEADERBOARD_TTL_MS` / `METRICS_INTERVAL_MS` | Leaderboard cache TTL; how often the metrics line is logged. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Discord OAuth. Redirect URI: `{BASE_URL}/auth/discord/callback`. |
