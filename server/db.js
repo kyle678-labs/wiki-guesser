@@ -63,24 +63,27 @@ db.exec(`
   -- (No backticks in this comment on purpose — the whole schema is one
   -- template literal, and a stray one ends it mid-statement.)
   --
-  -- Convention across every daily game: LOWER score is better (words revealed,
-  -- moves taken), with the server-measured solve time as the tie-break.
+  -- Convention across every daily game: LOWER score is better (guesses taken,
+  -- moves made), and a tie goes to whoever got there first — created_at, not a
+  -- stopwatch. Nothing here is timed: a daily should reward working the clue
+  -- out, not racing it, and a solve time mostly measures how fast someone
+  -- types.
   CREATE TABLE IF NOT EXISTS daily_scores (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     day         TEXT NOT NULL,              -- "YYYY-MM-DD", always UTC
     game        TEXT NOT NULL,              -- 'wikidle' | …
     identity    TEXT NOT NULL,
     name        TEXT NOT NULL,
-    score       INTEGER NOT NULL,
-    ms          INTEGER NOT NULL,           -- server-measured, not client-reported
-    created_at  INTEGER NOT NULL,
+    score       INTEGER NOT NULL,           -- guesses taken; 1 = first try
+    created_at  INTEGER NOT NULL,           -- also the tie-break
     UNIQUE(day, game, identity)
   );
 
   CREATE INDEX IF NOT EXISTS idx_ratings_mode_rating ON ratings(mode, rating DESC);
 
-  -- Exactly the shape the board is read in: one day, one game, best first.
-  CREATE INDEX IF NOT EXISTS idx_daily_board ON daily_scores(day, game, score, ms);
+  -- Exactly the shape the board is read in: one day, one game, best first,
+  -- earliest solver ahead on a tie.
+  CREATE INDEX IF NOT EXISTS idx_daily_board ON daily_scores(day, game, score, created_at);
   -- Account erasure has to find a player's rows by identity, and the retention
   -- sweep has to find every row older than a cutoff.
   CREATE INDEX IF NOT EXISTS idx_daily_identity ON daily_scores(identity);
@@ -114,6 +117,30 @@ if (!hasColumn("users", "last_seen")) {
   // up by the very first inactivity purge. Their signup date is the best
   // evidence of activity we have retrospectively.
   db.exec("UPDATE users SET last_seen = created_at WHERE last_seen IS NULL");
+}
+
+// Wikidle shipped scoring by WORDS REVEALED with the solve time as the
+// tie-break. It now scores by GUESSES TAKEN, and a tie goes to whoever solved
+// it first. Rows written under the old rule have to be converted, or one day's
+// board would sort two different measurements against each other and quietly
+// rank a worse solve above a better one.
+//
+// The offset is hardcoded at 3 on purpose. Old score = START_WORDS(4) +
+// wrongGuesses, and guesses = wrongGuesses + 1, so guesses = score - 3. A
+// migration records what the data meant when it was written; if START_WORDS
+// ever changes, this arithmetic must not follow it.
+//
+// Order matters: `ms` is a column of idx_daily_board, and SQLite refuses to
+// DROP COLUMN while an index still references it. The CREATE at the end is what
+// actually installs the new definition — the CREATE INDEX IF NOT EXISTS in the
+// schema above is a no-op on a database that already has the old index.
+if (hasColumn("daily_scores", "ms")) {
+  db.exec(`
+    DROP INDEX IF EXISTS idx_daily_board;
+    UPDATE daily_scores SET score = score - 3 WHERE game = 'wikidle' AND score > 3;
+    ALTER TABLE daily_scores DROP COLUMN ms;
+    CREATE INDEX IF NOT EXISTS idx_daily_board ON daily_scores(day, game, score, created_at);
+  `);
 }
 
 const stmts = {
@@ -177,14 +204,14 @@ const stmts = {
   // one-attempt-per-day rule. Enforcing it in the schema rather than with a
   // read-then-write means two requests racing cannot both slip through.
   insertDailyScore: db.prepare(`
-    INSERT OR IGNORE INTO daily_scores (day, game, identity, name, score, ms, created_at)
-    VALUES (@day, @game, @identity, @name, @score, @ms, @created_at)
+    INSERT OR IGNORE INTO daily_scores (day, game, identity, name, score, created_at)
+    VALUES (@day, @game, @identity, @name, @score, @created_at)
   `),
   dailyBoard: db.prepare(`
-    SELECT name, score, ms, created_at
+    SELECT name, score, created_at
       FROM daily_scores
      WHERE day = @day AND game = @game
-     ORDER BY score ASC, ms ASC, created_at ASC
+     ORDER BY score ASC, created_at ASC
      LIMIT @limit
   `),
   dailyEntry: db.prepare("SELECT * FROM daily_scores WHERE day = ? AND game = ? AND identity = ?"),
@@ -192,7 +219,7 @@ const stmts = {
     SELECT COUNT(*) AS ahead
       FROM daily_scores
      WHERE day = @day AND game = @game
-       AND (score < @score OR (score = @score AND ms < @ms))
+       AND (score < @score OR (score = @score AND created_at < @created_at))
   `),
   deleteDailyForIdentity: db.prepare("DELETE FROM daily_scores WHERE identity = ?"),
   deleteDailyBefore: db.prepare("DELETE FROM daily_scores WHERE day < ?"),
@@ -467,7 +494,12 @@ const getDailyLeaderboard = (day, game, limit = 25) => stmts.dailyBoard.all({ da
 // Where a result sits on the day's board, 1-based. Counted rather than found by
 // scanning the board, so a player outside the visible top N still learns their
 // placing.
-const getDailyRank = (day, game, score, ms) => stmts.dailyRank.get({ day, game, score, ms }).ahead + 1;
+//
+// Ties are broken by created_at, which is what "fewest guesses, first to get
+// there" means — so this has to be given the row's own timestamp, not the
+// current time, or a player would rank behind everyone they actually beat.
+const getDailyRank = (day, game, score, createdAt) =>
+  stmts.dailyRank.get({ day, game, score, created_at: createdAt }).ahead + 1;
 
 // A daily board is a scoreboard for one day, not a history. Keeping rows past
 // their day serves nobody and quietly accumulates display names, so they are

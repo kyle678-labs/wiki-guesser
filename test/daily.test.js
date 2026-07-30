@@ -203,14 +203,14 @@ test("solving records a score, reveals the answer, and closes the round", async 
   const st = JSON.parse(res.body);
   assert.equal(st.won, true);
   assert.equal(st.done, true);
-  // Solved first try, so it cost only the opening words — the best possible score.
-  assert.equal(st.score, wikidle.START_WORDS);
+  // Scored in guesses, not words and not seconds: solved first try is a 1.
+  assert.equal(st.score, 1, "a first-try solve is one guess");
   assert.equal(st.answer, answerToday(), "now it can be shown");
-  assert.equal(typeof st.ms, "number");
+  assert.equal(st.ms, undefined, "the daily is not timed");
 
   const board = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle/leaderboard", cookie)).body);
   assert.ok(board.me, "a player who finished gets their own placing back");
-  assert.equal(board.me.score, wikidle.START_WORDS);
+  assert.equal(board.me.score, 1);
   assert.ok(board.leaderboard.some((r) => r.name === board.me.name), "and appears on the board itself");
 });
 
@@ -234,4 +234,55 @@ test("an empty guess is rejected without costing a word", async () => {
   assert.equal(res.status, 400);
   const after = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle", cookie)).body);
   assert.equal(after.revealed, before.revealed, "a non-guess must not advance the puzzle");
+});
+
+test("the score is the number of guesses, counted by the server", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "Counter");
+  await helpers.get(srv.port, "/api/daily/wikidle", cookie);
+
+  for (const wrong of ["nope", "still nope", "definitely not"]) {
+    await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: wrong }, cookie);
+  }
+  const res = await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: answerToday() }, cookie);
+  const st = JSON.parse(res.body);
+
+  // Three misses and a hit is four guesses — not the seven words that were on
+  // screen by then, and not however long the player spent looking at them.
+  assert.equal(st.score, 4);
+  assert.equal(st.guesses.length, 4);
+  assert.equal(st.revealed, wikidle.START_WORDS + 3, "words still advance; they just aren't the score");
+});
+
+test("equal scores are ranked by who solved first", async () => {
+  const early = await helpers.guestSession(srv.port, "Early");
+  const late = await helpers.guestSession(srv.port, "Late");
+
+  // Both solve first try, so both score 1 and the tie can only break on order.
+  await helpers.get(srv.port, "/api/daily/wikidle", early.cookie);
+  await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: answerToday() }, early.cookie);
+  // created_at is a millisecond stamp; without a gap the two rows can share one
+  // and the ordering would be down to rowid rather than to the rule under test.
+  await new Promise((r) => setTimeout(r, 5));
+  await helpers.get(srv.port, "/api/daily/wikidle", late.cookie);
+  await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: answerToday() }, late.cookie);
+
+  const board = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle/leaderboard", late.cookie)).body);
+  const names = board.leaderboard.filter((r) => r.name.startsWith("Early") || r.name.startsWith("Late")).map((r) => r.name);
+  assert.ok(names[0].startsWith("Early"), `first solver should lead, got ${JSON.stringify(names)}`);
+  assert.ok(
+    board.leaderboard.find((r) => r.name.startsWith("Early")).rank <
+      board.leaderboard.find((r) => r.name.startsWith("Late")).rank
+  );
+});
+
+test("the board reports no timing at all", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "NoClock");
+  await helpers.get(srv.port, "/api/daily/wikidle", cookie);
+  await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: answerToday() }, cookie);
+
+  const board = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle/leaderboard", cookie)).body);
+  for (const row of board.leaderboard) {
+    assert.equal(row.ms, undefined, "a timed field would invite the client to sort on it");
+  }
+  assert.equal(board.me.ms, undefined);
 });

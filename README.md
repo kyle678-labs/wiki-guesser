@@ -245,8 +245,14 @@ nowhere else, including the client, which reads the set from `/api/config`.
 
 `/daily` serves one article a day. You start with the first four words of its
 opening — its own name blanked out — and name it; every wrong guess reveals one
-more word. Your score is how many words it took, so **lower is better**, with the
-solve time as the tie-break.
+more word. Your score is **how many guesses it took**, so lower is better and a
+first-try solve is a 1.
+
+**Nothing is timed.** A tie goes to whoever got there first (`created_at`), not
+to whoever typed fastest. A stopwatch on a daily rewards racing the clue rather
+than working it out, and mostly measures typing speed. One consequence worth
+knowing: among players on the same score, earlier-in-the-UTC-day solves rank
+higher, so the board does favour whoever plays soon after midnight.
 
 **The day is UTC.** Local midnight would read more naturally to one player, but
 it makes a shared board incoherent — two people holding "today's" best score on
@@ -260,9 +266,11 @@ always resolves to the same article, on every instance, forever — with no tabl
 of upcoming puzzles to maintain or get out of sync.
 
 **The server holds everything worth lying about**: the answer, the words you
-have not earned, the guess count, and the clock (started when the puzzle is
-handed out, not when the browser says so). The page is only ever sent the words
-already revealed, so there is nothing in it to read ahead to.
+have not earned, and the guess count. The page is only ever sent the words
+already revealed, so there is nothing in it to read ahead to — and the score is
+counted from the server's own list of guesses, so a 1 has to be earned rather
+than claimed. Someone who looks the answer up still scores 1, but that was
+equally true when it was timed; dropping the clock costs no real defence.
 
 Scores are stored per day and **not** per account — guests are on the board too.
 Rows carry the display name as it was at the time, are deleted after

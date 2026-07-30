@@ -42,8 +42,8 @@
     <h2 class="section-title">Today's board</h2>
     <div class="card">
       <table class="board">
-        <thead><tr><th>#</th><th>Player</th><th>Words</th><th>Time</th></tr></thead>
-        <tbody id="daily-board"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+        <thead><tr><th>#</th><th>Player</th><th>Guesses</th></tr></thead>
+        <tbody id="daily-board"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
       </table>
       <p class="hint" id="daily-me"></p>
     </div>
@@ -53,9 +53,10 @@
       <ol style="margin-left:1.2rem; display:flex; flex-direction:column; gap:0.4rem;">
         <li>Everyone gets the same article each day. It changes at midnight UTC.</li>
         <li>You start with the first four words of its opening — with the article's own name blanked out.</li>
-        <li>Guess wrong and one more word appears. Your score is how many words it took, so lower is better.</li>
+        <li>Guess wrong and one more word appears. Your score is how many guesses it took, so lower is better.</li>
         <li>Near-misses count: a typo or a missing accent will still be accepted.</li>
-        <li>One attempt per day, and the clock starts when the puzzle loads.</li>
+        <li>Nothing is timed — take as long as you like. Equal scores are ranked by who got there first.</li>
+        <li>One attempt per day.</li>
       </ol>
     </div>
   </div>

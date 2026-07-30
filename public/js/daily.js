@@ -68,9 +68,10 @@
       state.answer.replace(/ /g, "_")
     )}" target="_blank" rel="noopener">${WG.escapeHtml(state.answer)}</a>`;
 
+    const guessWord = state.score === 1 ? "guess" : "guesses";
     el.innerHTML = state.won
-      ? `<h3 class="daily-win">Got it in ${state.score} words.</h3>
-         <p class="muted">It was ${answer} — solved in ${(state.ms / 1000).toFixed(1)}s.</p>
+      ? `<h3 class="daily-win">Got it in ${state.score} ${guessWord}.</h3>
+         <p class="muted">It was ${answer}.</p>
          <button class="ghost small" id="daily-share">Copy result</button>`
       : `<h3 class="daily-lose">Out of words.</h3>
          <p class="muted">It was ${answer}.</p>`;
@@ -80,7 +81,7 @@
       share.addEventListener("click", async () => {
         // Deliberately no answer and no link — a result you can post the moment
         // you solve it, without spoiling the day for whoever reads it.
-        const text = `Wikidle ${state.day} — ${state.score} words\n${location.origin}/daily`;
+        const text = `Wikidle ${state.day} — ${state.score} ${guessWord}\n${location.origin}/daily`;
         try {
           await navigator.clipboard.writeText(text);
           WG.toast("Result copied!");
@@ -132,15 +133,16 @@
                 <td>${r.rank}</td>
                 <td>${WG.escapeHtml(r.name)}</td>
                 <td>${r.score}</td>
-                <td class="muted">${(r.ms / 1000).toFixed(1)}s</td>
               </tr>`
             )
             .join("")
-        : `<tr><td colspan="4" class="muted">Nobody has solved it yet today — go first.</td></tr>`;
-      $("daily-me").textContent = me ? `You: #${me.rank} with ${me.score} words.` : "";
+        : `<tr><td colspan="3" class="muted">Nobody has solved it yet today — go first.</td></tr>`;
+      $("daily-me").textContent = me
+        ? `You: #${me.rank} with ${me.score} ${me.score === 1 ? "guess" : "guesses"}.`
+        : "";
     } catch (e) {
       console.error("daily board failed to load", e);
-      $("daily-board").innerHTML = `<tr><td colspan="4" class="muted">Couldn't load the board.</td></tr>`;
+      $("daily-board").innerHTML = `<tr><td colspan="3" class="muted">Couldn't load the board.</td></tr>`;
     }
   }
 

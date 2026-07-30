@@ -33,16 +33,11 @@ function progressFor(req, game, day) {
   }
   if (!req.session.daily[game]) {
     req.session.daily[game] = {
-      // The clock starts the moment the puzzle is handed out, and only the
-      // server ever reads it. A client cannot report a faster time than the one
-      // it actually took, which is the whole point of timing it here.
-      startedAt: Date.now(),
       revealed: wikidle.START_WORDS,
       guesses: [],
       done: false,
       won: false,
       score: null,
-      ms: null,
     };
   }
   return req.session.daily[game];
@@ -61,7 +56,6 @@ function wikidleView(puzzle, st) {
     done: st.done,
     won: st.won,
     score: st.score,
-    ms: st.ms,
     // Only once the round is over, win or lose. Before that it is the answer.
     answer: st.done ? puzzle.title : null,
   };
@@ -127,10 +121,10 @@ router.post("/api/daily/wikidle/guess", express.json(), (req, res, next) => {
   if (correct) {
     st.done = true;
     st.won = true;
-    // The score is how many words it took — so a first-guess solve scores the
-    // opening four, and the board reads low-is-better like every daily here.
-    st.score = st.revealed;
-    st.ms = Date.now() - st.startedAt;
+    // The score is how many guesses it took, so a first-try solve scores 1.
+    // Counted from the server's own list rather than anything the client sends,
+    // which is what stops "1" being a thing you can simply claim.
+    st.score = st.guesses.length;
     try {
       recordDailyScore({
         day: puzzle.day,
@@ -138,7 +132,6 @@ router.post("/api/daily/wikidle/guess", express.json(), (req, res, next) => {
         identity: user.id,
         name: user.name,
         score: st.score,
-        ms: st.ms,
       });
     } catch (err) {
       // A board write must never cost someone their solve. They still see the
@@ -168,7 +161,6 @@ router.get("/api/daily/:game/leaderboard", (req, res) => {
     rank: i + 1,
     name: r.name,
     score: r.score,
-    ms: r.ms,
   }));
 
   // A player outside the visible top N still gets their placing, which is the
@@ -176,7 +168,7 @@ router.get("/api/daily/:game/leaderboard", (req, res) => {
   let me = null;
   const mine = user ? getDailyEntry(day, game, user.id) : null;
   if (mine) {
-    me = { rank: getDailyRank(day, game, mine.score, mine.ms), name: mine.name, score: mine.score, ms: mine.ms };
+    me = { rank: getDailyRank(day, game, mine.score, mine.created_at), name: mine.name, score: mine.score };
   }
 
   res.json({ day, resetInMs: msUntilReset(), leaderboard: rows, me });

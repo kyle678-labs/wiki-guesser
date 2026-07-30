@@ -491,9 +491,9 @@ a.btn-link:hover { background: var(--progressive-hover); border-color: var(--pro
 .daily-win { color: var(--green); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
 .daily-lose { color: var(--score); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
 
-/* The board is short and read at a glance, so the numeric columns are tabular
-   to stop ranks and times jittering as they update. */
-#daily-board td:first-child, #daily-board td:nth-child(3), #daily-board td:nth-child(4) {
+/* The board is short and read at a glance, so rank and guess count are tabular
+   to stop the columns jittering as rows update. */
+#daily-board td:first-child, #daily-board td:nth-child(3) {
   font-variant-numeric: tabular-nums;
 }
 
