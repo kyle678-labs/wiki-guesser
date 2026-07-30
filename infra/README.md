@@ -166,8 +166,34 @@ aws ssm start-session --target $(terraform output -raw instance_id)
 sudo wiki-guesser-deploy          # or: sudo wiki-guesser-deploy v1.2.0
 ```
 
-That pulls, reinstalls dependencies, restarts under SIGTERM (so in-flight games
-drain rather than dying), and checks `/healthz`.
+That pulls, reinstalls dependencies, refreshes `/etc/wiki-guesser.env` from SSM,
+restarts under SIGTERM (so in-flight games drain rather than dying), and checks
+`/healthz`.
+
+**Change a secret or add an OAuth provider** — after `terraform apply` has
+written the new values to SSM:
+
+```bash
+sudo wiki-guesser-refresh-env --restart
+```
+
+Parameters under `/wiki-guesser` are otherwise only read at instance boot, so
+adding `GOOGLE_CLIENT_ID` and friends to SSM and redeploying used to have no
+effect whatsoever: `wiki-guesser-deploy` pulls code, not configuration. The
+provider simply stayed disabled, with nothing in any log to say why. This
+rebuilds the env file from SSM, and refuses to replace a working one if the
+fetch comes back without a `SESSION_SECRET` — the app will not boot without it,
+so leaving the old file in place is always the safer failure.
+
+`wiki-guesser-deploy` now calls it too, so an ordinary release picks up SSM
+changes on its own; running it directly is for when you want the change applied
+without shipping a new version.
+
+> Both of these helpers are written to the instance by `user_data`, which runs
+> **only at first boot** — `user_data_replace_on_change = false` means editing
+> the template and applying will not update a running box. A box built before
+> this change has no `wiki-guesser-refresh-env` on it; see the one-off command
+> in the deploy notes below.
 
 **Read logs** — the app emits one JSON object per line, so fields are directly
 queryable in CloudWatch Logs Insights:

@@ -355,7 +355,20 @@ resource "aws_instance" "app" {
     http_endpoint = "enabled"
   }
 
-  user_data = templatefile("${path.module}/user_data.sh.tftpl", {
+  # Gzipped, because EC2 caps user data at 16 KB and this script had already
+  # grown to 15.4 KB — 94% of the budget — which made every further edit a
+  # gamble on a limit nobody was watching. cloud-init detects the gzip magic
+  # bytes and decompresses before running, so nothing about the script changes;
+  # it just arrives as ~7 KB instead of ~18 KB and there is room to work again.
+  #
+  # base64gzip is deterministic (Go's gzip writer leaves the header mtime at
+  # zero), so this does not produce a perpetual diff on every plan.
+  #
+  # The one cost: `View user data` in the EC2 console now shows compressed
+  # bytes rather than the script. Read it from git, or from
+  # /var/log/user-data.log on the instance, which is where you would be looking
+  # to debug a boot anyway.
+  user_data_base64 = base64gzip(templatefile("${path.module}/user_data.sh.tftpl", {
     project             = var.project
     aws_region          = var.aws_region
     domain_name         = var.domain_name
@@ -368,9 +381,9 @@ resource "aws_instance" "app" {
     log_group           = aws_cloudwatch_log_group.app.name
     caddy_version       = var.caddy_version
     node_major          = var.node_major
-  })
+  }))
 
-  # Editing user_data does NOT rebuild the box — that would destroy every game in
+  # Editing user data does NOT rebuild the box — that would destroy every game in
   # progress on a cosmetic change. Re-run it yourself over SSM, or taint the
   # instance when you genuinely want a rebuild.
   user_data_replace_on_change = false

@@ -131,10 +131,28 @@ npm ci --omit=dev
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 # ── Environment ──────────────────────────────────────────────────────────────
-# Secrets stay in SSM; this file is the only place they touch disk, and only
+# Secrets stay in SSM; the env file is the only place they touch disk, and only
 # root and the service account can read it.
-umask 077
-cat > "$ENV_FILE" <<EOF
+#
+# Installed as a standalone command rather than written inline, so the code path
+# that builds the file at boot is the same one that can rebuild it later. That
+# gap was a real trap: parameters under the prefix were read ONCE, at first boot,
+# and nothing afterwards re-read them. Adding OAuth credentials to SSM and
+# redeploying therefore did nothing at all — wiki-guesser-deploy pulls code and
+# restarts, but never touches this file — so the provider stayed disabled with
+# no error anywhere to explain why.
+cat > "/usr/local/bin/$PROJECT-refresh-env" <<EOF
+#!/bin/bash
+# Rebuild $ENV_FILE from SSM. Idempotent - safe to re-run at any time.
+# Pass --restart to apply immediately; otherwise the new values take effect on
+# the next restart of the service.
+set -euo pipefail
+
+TMP="\$(mktemp)"
+trap 'rm -f "\$TMP"' EXIT
+chmod 600 "\$TMP"
+
+cat > "\$TMP" <<ENVEOF
 NODE_ENV=production
 PORT=3000
 BASE_URL=https://$DOMAIN
@@ -142,23 +160,45 @@ DATA_DIR=$DATA_DIR
 MYSTERY_DB=$DATA_DIR/$POOL_KEY
 LOG_LEVEL=info
 TRUST_PROXY=true
+ENVEOF
+
+# Every parameter under our prefix as KEY=VALUE (SESSION_SECRET, plus whichever
+# OAuth credentials were supplied).
+#
+# The line continuations are doubled because this is inside an unquoted heredoc:
+# a lone backslash-newline is consumed as the OUTER script's continuation and
+# the command arrives on the box collapsed onto one line. \\ writes a literal
+# backslash, so the helper stays readable to whoever opens it at 3am.
+aws ssm get-parameters-by-path \\
+  --path "$SSM_PREFIX" \\
+  --with-decryption \\
+  --recursive \\
+  --region "$REGION" \\
+  --output json \\
+  | jq -r '.Parameters[] | "\(.Name | split("/") | last)=\(.Value)"' >> "\$TMP"
+
+# Validate BEFORE replacing anything. The app refuses to boot in production
+# without a SESSION_SECRET, so a transient SSM or IAM failure that produced a
+# truncated file would turn a no-op refresh into an outage on the next restart.
+# Building it off to one side and only swapping on success means the worst case
+# is "nothing changed", which is always the better failure.
+if ! grep -q '^SESSION_SECRET=' "\$TMP"; then
+  echo "FATAL: SESSION_SECRET missing from SSM - leaving $ENV_FILE untouched." >&2
+  exit 1
+fi
+
+install -o root -g "$APP_USER" -m 640 "\$TMP" "$ENV_FILE"
+echo "Wrote $ENV_FILE from $SSM_PREFIX."
+
+if [ "\$${1:-}" = "--restart" ]; then
+  systemctl restart "$PROJECT.service"
+  echo "Restarted $PROJECT."
+fi
 EOF
+chmod +x "/usr/local/bin/$PROJECT-refresh-env"
 
-# Append every parameter under our prefix as KEY=VALUE (SESSION_SECRET, plus
-# whichever OAuth credentials were supplied).
-aws ssm get-parameters-by-path \
-  --path "$SSM_PREFIX" \
-  --with-decryption \
-  --recursive \
-  --region "$REGION" \
-  --output json \
-  | jq -r '.Parameters[] | "\(.Name | split("/") | last)=\(.Value)"' >> "$ENV_FILE"
-
-chown "root:$APP_USER" "$ENV_FILE"
-chmod 640 "$ENV_FILE"
-umask 022
-
-grep -q '^SESSION_SECRET=' "$ENV_FILE" || { echo "FATAL: SESSION_SECRET missing from SSM" >&2; exit 1; }
+# No --restart: the service does not exist yet on a first boot.
+"/usr/local/bin/$PROJECT-refresh-env"
 
 # ── systemd service ──────────────────────────────────────────────────────────
 cat > "/etc/systemd/system/$PROJECT.service" <<EOF
@@ -362,6 +402,15 @@ git -c safe.directory=$APP_DIR fetch --depth 1 origin "\$REF"
 git -c safe.directory=$APP_DIR reset --hard FETCH_HEAD
 npm ci --omit=dev
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+# Pick up any SSM changes as part of the deploy - new OAuth credentials, a
+# rotated session secret - so shipping a release and changing configuration are
+# not two mechanisms that can silently disagree about what is live.
+#
+# Deliberately non-fatal. The helper validates before it replaces anything, so a
+# transient SSM error leaves the working env file exactly where it was; aborting
+# a deploy over that would block a code fix on an unrelated failure.
+"/usr/local/bin/$PROJECT-refresh-env" \\
+  || echo "WARNING: could not refresh $ENV_FILE from SSM - continuing with the existing file." >&2
 systemctl restart "$PROJECT.service"
 # Poll instead of sleeping a fixed interval. The app opens a ~919 MB SQLite pool
 # on startup, so a sleep that is comfortably long today becomes a spurious
