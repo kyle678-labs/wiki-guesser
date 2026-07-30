@@ -139,6 +139,24 @@ test("responses carry a CSP and omit the framework fingerprint", async () => {
   assert.equal(res.headers["x-content-type-options"], "nosniff");
 });
 
+// `ws:`/`wss:` are scheme sources: no host, so they allow a socket to anywhere
+// on the internet. That is invisible from a running test server, which is
+// always NODE_ENV=test and therefore always serves the dev policy — so assert
+// against the directive builder instead, or the production hole stays untested.
+test("the production CSP scopes sockets to the origin, not to every host", () => {
+  const { cspDirectives } = require("../server/app");
+
+  const prod = cspDirectives({ isProd: true, adsEnabled: false });
+  assert.deepEqual(prod.connectSrc, ["'self'"], "production must not carry bare ws:/wss:");
+  assert.deepEqual(prod.upgradeInsecureRequests, [], "HSTS-style upgrade belongs in production");
+
+  // Dev keeping the permissive schemes is a deliberate trade, not an oversight.
+  // Pinned so that flipping it is a decision someone makes on purpose.
+  const dev = cspDirectives({ isProd: false, adsEnabled: false });
+  assert.ok(dev.connectSrc.includes("ws:"), "local dev keeps the bare schemes");
+  assert.equal(dev.upgradeInsecureRequests, null, "dev must not rewrite localhost to https");
+});
+
 test("the theme bootstrap is served as a real file so the CSP holds", async () => {
   const res = await get(srv.port, "/js/theme.js");
   assert.equal(res.status, 200);

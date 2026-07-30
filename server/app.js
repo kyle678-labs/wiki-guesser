@@ -49,8 +49,12 @@ const AD_HOSTS = [
 // `style-src` keeps 'unsafe-inline' because the markup uses inline style=""
 // attributes; nothing else needs an inline exception (the theme bootstrap lives
 // in /js/theme.js precisely so script-src can stay on 'self').
-function cspDirectives() {
-  const ads = config.adsense.enabled ? AD_HOSTS : [];
+//
+// Takes its inputs rather than reading config directly so both branches are
+// testable: the production directives are the ones that matter and they are
+// exactly the ones a test server (NODE_ENV=test) would otherwise never build.
+function cspDirectives({ isProd = config.isProd, adsEnabled = config.adsense.enabled } = {}) {
+  const ads = adsEnabled ? AD_HOSTS : [];
   const directives = {
     defaultSrc: ["'self'"],
     baseUri: ["'self'"],
@@ -69,12 +73,20 @@ function cspDirectives() {
       "https://cdn.discordapp.com",
       ...ads,
     ],
-    // Socket.IO upgrades to a WebSocket on the same origin.
-    connectSrc: ["'self'", "ws:", "wss:", ...ads],
+    // Socket.IO upgrades to a WebSocket on the same origin, and CSP3 'self'
+    // already covers ws:/wss: there — every current browser implements that.
+    //
+    // The bare schemes are DEV-ONLY, and deliberately so: `ws:` and `wss:` are
+    // scheme sources with no host, so they permit a socket to ANY host on the
+    // internet. In production that hands an XSS a clean exfiltration channel
+    // and quietly undoes the point of the rest of this policy. Locally they
+    // stay, because a tunnel or a second dev port is not same-origin and a dev
+    // box is not where that risk lives.
+    connectSrc: isProd ? ["'self'", ...ads] : ["'self'", "ws:", "wss:", ...ads],
     frameSrc: ads.length ? ads : ["'none'"],
     // helmet turns this on by default; over plain http in dev it would rewrite
     // local requests to https. `null` removes a default directive entirely.
-    upgradeInsecureRequests: config.isProd ? [] : null,
+    upgradeInsecureRequests: isProd ? [] : null,
   };
   return directives;
 }
@@ -350,4 +362,7 @@ function buildServer(overrides = {}) {
   return { app, server, io, manager, sessionMiddleware };
 }
 
-module.exports = { buildServer };
+// cspDirectives is exported for tests. The production policy is the one worth
+// asserting on, and a test server never builds it — NODE_ENV=test means every
+// header a running-server test can inspect is the dev variant.
+module.exports = { buildServer, cspDirectives };
