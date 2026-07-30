@@ -1,0 +1,48 @@
+# Tests on every change to main and every pull request.
+#
+# deploy.yml also runs the suite, but that is a release gate, not a safety net:
+# it only fires on a tag, so without this a broken commit sits on main looking
+# healthy until the moment you try to ship. This is what makes "main is always
+# releasable" a fact rather than an intention.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. Unlike deploy.yml this never assumes an AWS role, so it has no need
+# for id-token and should not be able to mint one.
+permissions:
+  contents: read
+
+# Superseded runs are worth cancelling here - only the newest commit's result
+# matters. deploy.yml deliberately does the opposite, because a cancelled deploy
+# still leaves its command running on the instance.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the same major the instance runs (node_major in
+      # infra/variables.tf). Testing on a version you do not deploy is how you
+      # find out about a runtime difference from a player rather than from CI.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `ci`, not `install`: it installs exactly what package-lock.json pins and
+      # fails if the lockfile and package.json disagree, which is the same thing
+      # the instance does at deploy time.
+      - run: npm ci
+
+      - run: npm test

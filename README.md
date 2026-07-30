@@ -1,5 +1,7 @@
 # 🧠 Wiki-Guesser
 
+[![CI](https://github.com/kyle678-labs/wiki-guesser/actions/workflows/ci.yml/badge.svg)](https://github.com/kyle678-labs/wiki-guesser/actions/workflows/ci.yml)
+
 A standalone, multiplayer version of the Wikipedia image-guessing game. A mystery
 Wikipedia image appears; players race to name the topic — or fish scoring words
 from its article — before the timer runs out. Highest total after all rounds wins.
