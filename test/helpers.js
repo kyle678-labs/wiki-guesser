@@ -144,17 +144,41 @@ function connect(port, cookie) {
   });
 }
 
-function once(sock, event, ms = 8000) {
+// How long to wait for a socket event before calling it a failure.
+//
+// This was 8s, which is almost exactly the wrong number. A socket handshake is a
+// real HTTP upgrade, and socket.io-client backs off roughly 1s, 2s then 4s
+// between reconnection attempts — so three unlucky retries consume ~7s and the
+// wait fails by a hair. It only showed up when the whole suite ran at once (a
+// process per file competing for the machine), which is precisely the condition
+// a CI runner reproduces and a single-file rerun does not.
+//
+// That matters because .github/workflows/deploy.yml runs this suite as the gate
+// in front of a production tag. A gate that fails for reasons unrelated to the
+// change is one people learn to re-run instead of read, and then it stops
+// catching anything. The longer budget is free when tests pass — the timer is
+// cleared by the first matching event — and only costs time on a genuine break.
+const EVENT_TIMEOUT_MS = parseInt(process.env.TEST_EVENT_TIMEOUT_MS, 10) || 20000;
+
+// Distinguish "the socket never got up" from "it connected but stayed quiet".
+// The old message said only which event was missing, which sent you looking at
+// the emit when the real problem was the handshake.
+function timeoutError(sock, event, ms) {
+  const state = sock.connected ? "socket was connected" : "socket never connected";
+  return new Error(`timeout waiting for "${event}" after ${ms}ms (${state})`);
+}
+
+function once(sock, event, ms = EVENT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`timeout waiting for "${event}"`)), ms);
+    const t = setTimeout(() => reject(timeoutError(sock, event, ms)), ms);
     sock.once(event, (data) => { clearTimeout(t); resolve(data); });
   });
 }
 
 // Resolve when an event arrives whose payload satisfies `pred`.
-function waitFor(sock, event, pred, ms = 8000) {
+function waitFor(sock, event, pred, ms = EVENT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => { sock.off(event, handler); reject(new Error(`timeout waiting for "${event}"`)); }, ms);
+    const t = setTimeout(() => { sock.off(event, handler); reject(timeoutError(sock, event, ms)); }, ms);
     const handler = (data) => {
       if (pred(data)) { clearTimeout(t); sock.off(event, handler); resolve(data); }
     };
