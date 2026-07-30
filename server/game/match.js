@@ -92,8 +92,13 @@ function puzzleFor(now = Date.now()) {
 // `assign[i]` is the title currently sitting under slot i. Everyone starts with
 // title i under slot i — which orderFor has already guaranteed is wrong for
 // every one of them.
+//
+// `startedAt` is the clock, and it starts the moment the grid is handed out
+// rather than on the first swap. On the first swap it would measure nothing but
+// mouse speed: recognising nine articles is the whole puzzle, and a player
+// could do all of it before touching anything.
 function freshState() {
-  return { assign: [...Array(COUNT).keys()], moves: 0, done: false, score: null };
+  return { assign: [...Array(COUNT).keys()], moves: 0, startedAt: Date.now(), done: false, score: null };
 }
 
 const inRange = (n) => Number.isInteger(n) && n >= 0 && n < COUNT;

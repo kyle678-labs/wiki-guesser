@@ -5,11 +5,13 @@
 // Built against a small synthetic pool rather than the real ~900 MB artifact,
 // so this runs in CI and on a laptop with no dump.
 //
-// Both games are scored in moves, which puts the weight of these tests in two
-// places. First, that the server is the thing counting: a solve has to cost as
-// many requests as it costs moves, and an illegal move has to cost neither.
-// Second, that Wikimatch's answer — which caption belongs to which picture —
-// never reaches the browser, because the moment it does the game is a click.
+// Both games are scored on the clock, which puts the weight of these tests in
+// three places. First, that the clock is the server's: it runs from when the
+// board was handed out, and nothing the browser sends can move it. Second, that
+// the move count is still the server's own even though it no longer scores —
+// an illegal move must cost neither a move nor the round. Third, that
+// Wikimatch's answer — which caption belongs to which picture — never reaches
+// the browser, because the moment it does the game is a click.
 
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -255,7 +257,15 @@ test("the hub lists all three of today's puzzles", async () => {
   for (const g of hub.games) {
     assert.equal(g.available, true, `${g.id} should be playable against the fixture pool`);
     assert.equal(g.played, false, "a player who has not finished anything has played nothing");
-    assert.ok(g.path && g.unit && g.unitOne, `${g.id} needs somewhere to go and a unit to be scored in`);
+    assert.ok(g.path, `${g.id} needs somewhere to go`);
+    assert.ok(["count", "time"].includes(g.format), `${g.id} needs to say how its score reads`);
+  }
+  // Wikidle counts; the two picture games race. That split is the whole scoring
+  // model, so it is asserted rather than left to the registry.
+  const formats = Object.fromEntries(hub.games.map((g) => [g.id, g.format]));
+  assert.deepEqual(formats, { wikidle: "count", tiles: "time", match: "time" });
+  for (const g of hub.games.filter((x) => x.format === "count")) {
+    assert.ok(g.unit && g.unitOne, `${g.id} needs both forms of its unit`);
   }
 });
 
@@ -312,33 +322,43 @@ test("a move the server won't accept costs neither a move nor the round", async 
   assert.equal(st.done, false);
 });
 
-test("solving the tiles scores the moves the server counted, and closes the round", async () => {
-  const { cookie } = await helpers.guestSession(srv.port, "Finisher");
+// Solve the tiles over HTTP, from whatever board this session was dealt.
+async function solveTiles(cookie, extra = []) {
   const start = await getJson("/api/daily/tiles", cookie);
-
-  // Two wasted moves first, so a score that merely echoed par would pass and a
-  // score that counted requests would not.
   const tile = start.slots[0];
-  const waste = [{ type: "rotate", slot: 0 }, { type: "rotate", slot: 0 }];
-  const moves = [...waste, ...perfectTileMoves({ slots: start.slots, rot: start.rot })];
+  const moves = [...extra, ...perfectTileMoves({ slots: start.slots, rot: start.rot })];
 
-  let st = null;
+  let st = start;
   for (const m of moves) {
     const res = await helpers.postJson(srv.port, "/api/daily/tiles/move", m, cookie);
     assert.equal(res.status, 200, `refused ${JSON.stringify(m)}`);
     st = JSON.parse(res.body);
   }
-  // perfectTileMoves was handed the ORIGINAL board, so the two wasted turns are
-  // still on that one tile and have to be turned back out — two more moves.
+  // perfectTileMoves was handed the ORIGINAL board, so any wasted turns are
+  // still on that one tile and have to be turned back out.
   for (let n = 0; n < 4 && !st.done; n++) {
     const slot = st.slots.indexOf(tile);
     const res = await helpers.postJson(srv.port, "/api/daily/tiles/move", { type: "rotate", slot }, cookie);
     st = JSON.parse(res.body);
   }
+  return { start, st };
+}
+
+test("solving the tiles scores the time the server measured, and closes the round", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "Finisher");
+  const began = Date.now();
+  // Two wasted moves, which cost time and must NOT cost score in themselves —
+  // the whole point of the change from moves to the clock.
+  const { start, st } = await solveTiles(cookie, [{ type: "rotate", slot: 0 }, { type: "rotate", slot: 0 }]);
+  const wall = Date.now() - began;
 
   assert.equal(st.done, true);
-  assert.ok(st.score > start.par, "wasted moves have to show up in the score");
-  assert.equal(st.score, st.moves, "the score is what the server counted");
+  assert.ok(st.moves > start.par, "the wasted turns still happened");
+  assert.notEqual(st.score, st.moves, "the score is no longer the move count");
+  // A time, and a plausible one: bounded below by nothing (the solve is fast)
+  // and above by how long this test actually took.
+  assert.ok(st.score >= 1, `score should be a positive duration, got ${st.score}`);
+  assert.ok(st.score <= wall + 1000, `score ${st.score}ms exceeds the ${wall}ms this test ran for`);
   assert.ok(st.answer, "now it can say what the picture was");
   assert.match(st.url, /^https:\/\/en\.wikipedia\.org\/wiki\//);
 
@@ -346,9 +366,59 @@ test("solving the tiles scores the moves the server counted, and closes the roun
   assert.equal(again.status, 409, "the round is over");
 
   const board = await getJson("/api/daily/tiles/leaderboard", cookie);
-  assert.equal(board.unit, "moves");
+  assert.equal(board.format, "time", "the board has to say how to read its numbers");
   assert.ok(board.me, "a player who finished gets their own placing back");
   assert.equal(board.me.score, st.score);
+});
+
+test("the clock runs from when the board was handed out, not from the first move", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "Dawdler");
+  const first = await getJson("/api/daily/tiles", cookie);
+  assert.ok(first.elapsedMs >= 0, "the page is told the time so it can show it");
+
+  // Sit there without touching anything. A clock that started on the first move
+  // would let a player plan the whole solve for free.
+  await new Promise((r) => setTimeout(r, 250));
+  const later = await getJson("/api/daily/tiles", cookie);
+  assert.ok(later.elapsedMs >= first.elapsedMs + 200, `clock did not advance: ${first.elapsedMs} → ${later.elapsedMs}`);
+  assert.equal(later.moves, 0, "and it advanced without a single move being made");
+});
+
+test("the browser cannot post its own time", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "Liar");
+  await getJson("/api/daily/tiles", cookie);
+  await new Promise((r) => setTimeout(r, 120));
+
+  // Every field the response carries, offered back on a move. The server reads
+  // its own clock and ignores all of it.
+  const res = await helpers.postJson(
+    srv.port,
+    "/api/daily/tiles/move",
+    { type: "rotate", slot: 0, score: 1, elapsedMs: 1, startedAt: Date.now(), moves: 0 },
+    cookie
+  );
+  const st = JSON.parse(res.body);
+  assert.equal(res.status, 200);
+  assert.ok(st.elapsedMs >= 100, `a claimed 1ms was believed: ${st.elapsedMs}`);
+  assert.equal(st.moves, 1, "and the move count is still the server's own");
+});
+
+test("the faster solve ranks above the slower one", async () => {
+  const quick = await helpers.guestSession(srv.port, "Quick");
+  const slow = await helpers.guestSession(srv.port, "Slow");
+
+  // Deal the slow player their board first and let it sit, so their clock is
+  // already running while the quick player plays theirs start to finish.
+  await getJson("/api/daily/tiles", slow.cookie);
+  await new Promise((r) => setTimeout(r, 400));
+  const fast = await solveTiles(quick.cookie);
+  const dawdled = await solveTiles(slow.cookie);
+
+  assert.ok(fast.st.score < dawdled.st.score, `${fast.st.score}ms should beat ${dawdled.st.score}ms`);
+
+  const board = await getJson("/api/daily/tiles/leaderboard", quick.cookie);
+  const rankOf = (name) => board.leaderboard.find((r) => r.name.startsWith(name)).rank;
+  assert.ok(rankOf("Quick") < rankOf("Slow"), "the board is ordered by the clock");
 });
 
 test("the matchup ships pictures and titles with nothing joining them", async () => {
@@ -365,12 +435,13 @@ test("the matchup ships pictures and titles with nothing joining them", async ()
   assert.equal(st.urls, null, "nine article links would name the nine pictures");
 });
 
-test("solving the matchup scores the swaps the server counted", async () => {
+test("solving the matchup scores the time the server measured", async () => {
   const { cookie } = await helpers.guestSession(srv.port, "Sorter");
   const start = await getJson("/api/daily/match", cookie);
   const puzzle = match.puzzleFor();
+  const began = Date.now();
 
-  // One wasted swap and its undo, so the score cannot merely be par.
+  // One wasted swap and its undo, which cost time and must not cost score.
   const swaps = [[0, 1], [0, 1], ...perfectMatchSwaps(puzzle)];
   let st = null;
   for (const [a, b] of swaps) {
@@ -380,8 +451,9 @@ test("solving the matchup scores the swaps the server counted", async () => {
   }
 
   assert.equal(st.done, true);
-  assert.equal(st.score, start.par + 2, "the two wasted swaps are on the scorecard");
-  assert.equal(st.score, st.moves);
+  assert.equal(st.moves, start.par + 2, "the two wasted swaps still happened");
+  assert.notEqual(st.score, st.moves, "the score is no longer the swap count");
+  assert.ok(st.score >= 1 && st.score <= Date.now() - began + 1000, `implausible time: ${st.score}`);
   assert.equal(st.urls.length, match.COUNT, "solved, so the captions can link out");
   // Solved means every caption is where it belongs.
   st.assign.forEach((title, slot) => assert.equal(puzzle.order[title], slot));
@@ -399,7 +471,7 @@ test("each game keeps its own board", async () => {
 
   const mine = await getJson("/api/daily/match/leaderboard", cookie);
   assert.ok(mine.me, "the player is on the game they finished");
-  assert.equal(mine.unit, "swaps");
+  assert.equal(mine.format, "time");
 
   const other = await getJson("/api/daily/wikidle/leaderboard", cookie);
   assert.equal(other.me, null, "and not on one they never played");

@@ -63,18 +63,29 @@ db.exec(`
   -- (No backticks in this comment on purpose — the whole schema is one
   -- template literal, and a stray one ends it mid-statement.)
   --
-  -- Convention across every daily game: LOWER score is better (guesses taken,
-  -- moves made), and a tie goes to whoever got there first — created_at, not a
-  -- stopwatch. Nothing here is timed: a daily should reward working the clue
-  -- out, not racing it, and a solve time mostly measures how fast someone
-  -- types.
+  -- Convention across every daily game: LOWER score is better, and a tie goes
+  -- to whoever got there first — created_at, not a second measurement.
+  --
+  -- What a score COUNTS is the game's business, and the two kinds are stored in
+  -- the same column on purpose: both are integers, both sort the same way, and
+  -- a board only ever reads one game at a time. server/dailies.js publishes the
+  -- format alongside the rows so nothing has to infer it from the number.
+  --
+  --   wikidle        guesses taken; 1 = first try
+  --   tiles, match   milliseconds to solve
+  --
+  -- Wikidle is deliberately untimed: a word puzzle scored on the clock rewards
+  -- typing speed as much as working the clue out. The picture games are the
+  -- other case — they are puzzles you can always finish, so "how fast" is the
+  -- only question left worth asking. The trade is that a timed puzzle can be
+  -- scouted, and is.
   CREATE TABLE IF NOT EXISTS daily_scores (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     day         TEXT NOT NULL,              -- "YYYY-MM-DD", always UTC
-    game        TEXT NOT NULL,              -- 'wikidle' | …
+    game        TEXT NOT NULL,              -- 'wikidle' | 'tiles' | 'match'
     identity    TEXT NOT NULL,
     name        TEXT NOT NULL,
-    score       INTEGER NOT NULL,           -- guesses taken; 1 = first try
+    score       INTEGER NOT NULL,           -- guesses, or milliseconds — see above
     created_at  INTEGER NOT NULL,           -- also the tie-break
     UNIQUE(day, game, identity)
   );
@@ -141,6 +152,29 @@ if (hasColumn("daily_scores", "ms")) {
     ALTER TABLE daily_scores DROP COLUMN ms;
     CREATE INDEX IF NOT EXISTS idx_daily_board ON daily_scores(day, game, score, created_at);
   `);
+}
+
+// The picture games shipped scoring by MOVES for the length of one branch and
+// then changed to the clock. Nothing in production ever wrote a move count —
+// they had not been released — so on the live database this matches nothing and
+// is a no-op. It exists for the boxes that did run that build: a dev machine, a
+// staging box, a reviewer's checkout.
+//
+// Deleted rather than converted, which the wikidle migration above could do and
+// this cannot: a move count carries no information about how long it took, so
+// there is nothing to convert it into. Left alone it would be far worse than
+// wrong — 42 moves read as 42 milliseconds, which is a score no honest player
+// can ever beat, sitting at the top of the board until the retention sweep
+// removes it thirty days later.
+//
+// The threshold is what separates the two meanings. A solve is dozens of
+// round trips to this server, so a real time is thousands of milliseconds;
+// a move count is tens. Anything under a second is a move count.
+{
+  const legacy = db
+    .prepare("DELETE FROM daily_scores WHERE game IN ('tiles', 'match') AND score < 1000")
+    .run().changes;
+  if (legacy) log.warn("daily_move_scores_dropped", { rows: legacy });
 }
 
 const stmts = {

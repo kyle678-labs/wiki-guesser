@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Wikitile — the daily Wikipedia picture scramble</title>
-<meta name="description" content="One Wikipedia picture a day, cut into sixteen tiles and scrambled. Tap to turn a tile, drag to swap two. Fewest moves wins. New puzzle at midnight UTC." />
+<meta name="description" content="One Wikipedia picture a day, cut into sixteen tiles and scrambled. Tap to turn a tile, drag to swap two. Fastest solve wins. New puzzle at midnight UTC." />
 <script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/styles.css" />
 </head>
@@ -20,7 +20,7 @@
   <div class="container">
     <header class="hero">
       <h1>Wikitile</h1>
-      <p class="tagline">One Wikipedia picture a day, in sixteen pieces and all the wrong way up. Put it back together in as few moves as you can.</p>
+      <p class="tagline">One Wikipedia picture a day, in sixteen pieces and all the wrong way up. Put it back together as fast as you can.</p>
       <p class="hint" id="daily-reset">Loading today's puzzle…</p>
     </header>
 
@@ -39,7 +39,7 @@
     <h2 class="section-title">Today's board</h2>
     <div class="card">
       <table class="board">
-        <thead><tr><th>#</th><th>Player</th><th id="tile-unit">Moves</th></tr></thead>
+        <thead><tr><th>#</th><th>Player</th><th id="tile-unit">Time</th></tr></thead>
         <tbody id="tile-leaderboard"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
       </table>
       <p class="hint" id="tile-me"></p>
@@ -51,8 +51,8 @@
         <li>Everyone gets the same picture, cut the same way, scrambled the same way. It changes at midnight UTC.</li>
         <li><strong>Tap a tile</strong> to turn it a quarter turn clockwise.</li>
         <li><strong>Drag a tile onto another</strong> to swap the two. On a keyboard, the arrow keys swap the focused tile with its neighbour.</li>
-        <li>Each turn and each swap is one move. Your score is how many moves it took, so lower is better — <em>par</em> is the fewest possible.</li>
-        <li>Nothing is timed — take as long as you like. Equal scores are ranked by who got there first.</li>
+        <li><strong>You're on the clock.</strong> It starts the moment the board appears and stops when the picture is whole, and that time is your score — fastest wins.</li>
+        <li>Each turn and each swap is one move. Moves don't score, but <em>par</em> — the fewest a board can be solved in — is worth chasing anyway: the short way round is usually the quick one.</li>
         <li>We only tell you what the picture was once you've finished it. One attempt per day.</li>
       </ol>
     </div>

@@ -485,6 +485,37 @@ const WG = (() => {
     });
   }
 
+  // ── Daily scores ─────────────────────────────────────────────────────────────
+  // Two kinds of score across the three puzzles: a count of guesses, and a solve
+  // time in milliseconds. Which one a game uses comes from the server (`format`
+  // on every daily response), so this never has to guess from the number — and
+  // adding a fourth game does not mean teaching the client about it.
+
+  // m:ss, and h:mm:ss only once there is an hour to show. Seconds are padded so
+  // a column of times stays aligned; the leading unit never is, because "01:23"
+  // reads like a stopwatch nobody asked for.
+  function formatTime(ms) {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const s = total % 60;
+    const m = Math.floor(total / 60) % 60;
+    const h = Math.floor(total / 3600);
+    const pad = (n) => String(n).padStart(2, "0");
+    return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  }
+
+  // A score as a player should read it. `spec` is any daily response — it needs
+  // `format`, and `unit`/`unitOne` when that format is a count.
+  function formatScore(score, spec) {
+    if (score == null) return "";
+    if (spec && spec.format === "time") return formatTime(score);
+    const unit = score === 1 ? (spec && spec.unitOne) || "" : (spec && spec.unit) || "";
+    return unit ? `${score} ${unit}` : String(score);
+  }
+
+  // What to head the score column with.
+  const scoreHeading = (spec) =>
+    spec && spec.format === "time" ? "Time" : ((spec && spec.unit) || "Score").replace(/^./, (c) => c.toUpperCase());
+
   // ── Daily strip ──────────────────────────────────────────────────────────────
   // The three daily puzzles across the top of each of their pages: which ones
   // are today's, which you have already done, and what you scored. Driven off
@@ -511,7 +542,7 @@ const WG = (() => {
         const state = !g.available
           ? `<span class="daily-tab-state muted">unavailable</span>`
           : g.played
-            ? `<span class="daily-tab-state done">✓ ${g.score} ${escapeHtml(g.unit)}</span>`
+            ? `<span class="daily-tab-state done">✓ ${escapeHtml(formatScore(g.score, g))}</span>`
             : `<span class="daily-tab-state">not played</span>`;
         const body = `<span class="daily-tab-name">${escapeHtml(g.name)}</span>${state}`;
         // The page you are on is not a link to itself, and a game with no
@@ -547,8 +578,8 @@ const WG = (() => {
     countdowns.set(el, setInterval(tick, 1000));
   }
 
-  // Today's board for one daily game. The score column is labelled from the
-  // unit the server reports, because 12 guesses, 12 moves and 12 swaps are three
+  // Today's board for one daily game. The score column is labelled and rendered
+  // from the format the server reports, because 12 guesses and 12 seconds are
   // different things and only the server knows which game this is.
   async function loadDailyBoard(game, { body, me, head } = {}) {
     if (!body) return;
@@ -556,15 +587,17 @@ const WG = (() => {
       const res = await fetch(`/api/daily/${game}/leaderboard`, { credentials: "same-origin" });
       if (!res.ok) throw new Error(`board ${res.status}`);
       const data = await res.json();
-      const amount = (n) => `${n} ${n === 1 ? data.unitOne : data.unit}`;
 
-      if (head) head.textContent = data.unit.charAt(0).toUpperCase() + data.unit.slice(1);
+      if (head) head.textContent = scoreHeading(data);
       body.innerHTML = data.leaderboard.length
         ? data.leaderboard
-            .map((r) => `<tr><td>${r.rank}</td><td>${escapeHtml(r.name)}</td><td>${r.score}</td></tr>`)
+            .map(
+              (r) => `<tr><td>${r.rank}</td><td>${escapeHtml(r.name)}</td>
+                <td>${escapeHtml(formatScore(r.score, data))}</td></tr>`
+            )
             .join("")
         : `<tr><td colspan="3" class="muted">Nobody has solved it yet today — go first.</td></tr>`;
-      if (me) me.textContent = data.me ? `You: #${data.me.rank} with ${amount(data.me.score)}.` : "";
+      if (me) me.textContent = data.me ? `You: #${data.me.rank} with ${formatScore(data.me.score, data)}.` : "";
     } catch (e) {
       console.error("daily board failed to load", e);
       body.innerHTML = `<tr><td colspan="3" class="muted">Couldn't load the board.</td></tr>`;
@@ -635,7 +668,7 @@ const WG = (() => {
     loadConfig, getConfig, getUser, connect, on, emit, reconnect,
     guestLogin, logout, showAuthModal, ensureUser, renderUserPill, showProfile,
     injectAds, toast, escapeHtml, avatarHtml, initTheme, chooseMode, modeLabel,
-    renderDailyStrip, startDailyCountdown, loadDailyBoard,
+    renderDailyStrip, startDailyCountdown, loadDailyBoard, formatTime, formatScore,
     chooseTier, tierLabel, ladderLabel, chatEnabled, setChatEnabled, rankedConfig,
   };
 })();

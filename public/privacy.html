@@ -99,9 +99,15 @@
       <h3>Daily puzzle scores</h3>
       <p>
         If you finish a <em>daily</em> puzzle — Wikidle, Wikitile or Wikimatch — we store one row for that day and that
-        puzzle: your display name at the time, your score (the guesses, moves or swaps it took), and when you finished.
-        Guests are included — the daily leaderboards are open to everyone, so they are not tied to having an account.
-        We do not time you, and we do not record how long you spent on a puzzle.
+        puzzle: your display name at the time, your score, and when you finished. Guests are included — the daily
+        leaderboards are open to everyone, so they are not tied to having an account.
+      </p>
+      <p>
+        What the score <em>is</em> depends on the puzzle, and one of them is a time. <strong>Wikidle</strong> scores the
+        number of guesses you took; it is not timed, and we do not record how long you spent on it. <strong>Wikitile</strong>
+        and <strong>Wikimatch</strong> are races, so for those the score <strong>is</strong> your solve time in
+        milliseconds — measured on our server from the moment the puzzle is sent to your browser until the moment you
+        finish it, and shown on that day's leaderboard. We do not track what you did in between, only how long it took.
       </p>
       <p>
         The row records the name as it was when you played, so the board keeps reading correctly afterwards. It is
@@ -217,7 +223,7 @@
           <tr><td>Server logs containing IP addresses</td><td>30 days, then deleted automatically</td></tr>
           <tr><td>Rate-limit counters</td><td>Held in memory only; gone on restart</td></tr>
           <tr><td>Account profile, ratings and match history</td><td>Until you delete it — there is a button in your profile — or after 24 months of inactivity, whichever comes first. The inactivity sweep runs automatically every day.</td></tr>
-          <tr><td>Daily puzzle scores (including guest names)</td><td>30 days, then deleted automatically. Deleting your account removes yours immediately.</td></tr>
+          <tr><td>Daily puzzle scores (including guest names, and solve times for the two picture puzzles)</td><td>30 days, then deleted automatically. Deleting your account removes yours immediately.</td></tr>
           <tr><td>Chat messages</td><td>Not stored at all — except the one case in the row below</td></tr>
           <tr><td>A chat message someone reported</td><td>Kept in our server logs, then deleted automatically after 30 days</td></tr>
         </tbody>

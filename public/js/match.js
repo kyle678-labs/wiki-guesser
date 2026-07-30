@@ -69,10 +69,28 @@
     });
   }
 
+  // ── The clock ───────────────────────────────────────────────────────────────
+  // Display only. The score is the server's own measurement, sent back on every
+  // response; this ticks between them so the number on screen moves, and is
+  // re-seeded from the server each time one arrives rather than counting up
+  // independently and drifting away from what will actually be recorded.
+  let clockBase = 0;
+  let clockFrom = 0;
+  let clockTimer = null;
+
+  const elapsedNow = () => (state.done ? state.score : clockBase + (Date.now() - clockFrom));
+
+  function syncClock() {
+    clearInterval(clockTimer);
+    clockBase = state.elapsedMs || 0;
+    clockFrom = Date.now();
+    if (!state.done) clockTimer = setInterval(renderStatus, 1000);
+  }
+
   function renderStatus() {
     $("match-status").textContent = state.done
       ? ""
-      : `${state.moves} swap${state.moves === 1 ? "" : "s"} · par is ${state.par}`;
+      : `${WG.formatTime(elapsedNow())} · ${state.moves} swap${state.moves === 1 ? "" : "s"} · par ${state.par}`;
   }
 
   function renderResult() {
@@ -80,15 +98,18 @@
     if (!state.done) { el.classList.add("hidden"); return; }
     el.classList.remove("hidden");
 
-    const verdict = state.score === state.par ? "Perfect — you hit par." : `Par was ${state.par}.`;
-    el.innerHTML = `<h3 class="daily-win">All nine, in ${state.score} swap${state.score === 1 ? "" : "s"}.</h3>
+    // The board ranks on the clock, but the swap count is still the interesting
+    // half of how you did — so it stays, next to par.
+    const swaps = `${state.moves} swap${state.moves === 1 ? "" : "s"}`;
+    const verdict = state.moves === state.par ? `${swaps} — you hit par.` : `${swaps}, par ${state.par}.`;
+    el.innerHTML = `<h3 class="daily-win">All nine, in ${WG.formatTime(state.score)}.</h3>
        <p class="muted">${verdict} Every caption is a link now — go and read one.</p>
        <button class="ghost small" id="match-share">Copy result</button>`;
 
     $("match-share").addEventListener("click", async () => {
       // Deliberately no titles — a result you can post the moment you solve it
       // without spoiling the day for whoever reads it.
-      const text = `Wikimatch ${state.day} — ${state.score} swaps (par ${state.par})\n${location.origin}/match`;
+      const text = `Wikimatch ${state.day} — ${WG.formatTime(state.score)} (${swaps}, par ${state.par})\n${location.origin}/match`;
       try {
         await navigator.clipboard.writeText(text);
         WG.toast("Result copied!");
@@ -108,6 +129,7 @@
   function apply(next) {
     state = next;
     picked = null;
+    syncClock();
     render();
     WG.startDailyCountdown($("daily-reset"), state);
     if (state.done) loadBoard();

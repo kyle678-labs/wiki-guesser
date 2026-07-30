@@ -59,6 +59,18 @@ before(() => {
      VALUES ('2026-07-30', 'wikidle', ?, ?, ?, ?, ?)`
   );
   OLD_ROWS.forEach(([id, name, oldScore], i) => ins.run(id, name, oldScore, 12_345, 1_700_000_000_000 + i));
+
+  // Picture-game rows from the branch where those two scored by MOVES, before
+  // they moved to the clock. Never released, so production has none — these
+  // stand in for the dev and staging boxes that did run that build.
+  const pic = db.prepare(
+    `INSERT INTO daily_scores (day, game, identity, name, score, ms, created_at)
+     VALUES ('2026-07-30', ?, ?, ?, ?, 0, 1700000000000)`
+  );
+  pic.run("tiles", "u9", "MoveScored", 42); // 42 moves, would read as 42ms
+  pic.run("match", "u10", "AlsoMoveScored", 7);
+  // A genuine time, written after the change. It must survive.
+  pic.run("tiles", "u11", "TimeScored", 18_984);
   db.close();
 });
 
@@ -101,6 +113,17 @@ test("the converted board still sorts best-first, earliest-first on a tie", () =
   // board gets a placing consistent with what everyone else can see.
   assert.equal(getDailyRank("2026-07-30", "wikidle", board[0].score, board[0].created_at), 1);
   assert.equal(getDailyRank("2026-07-30", "wikidle", board[2].score, board[2].created_at), 3);
+});
+
+test("picture-game move scores are dropped, and real times are kept", () => {
+  const names = db
+    .prepare("SELECT name FROM daily_scores WHERE game IN ('tiles', 'match') ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  // A move count read as milliseconds is a sub-second solve — a score nobody
+  // can beat, parked at the top of the board for the thirty days until the
+  // retention sweep gets to it. There is nothing to convert it into, so it goes.
+  assert.deepEqual(names, ["TimeScored"], `move-scored rows survived: ${names.join(", ")}`);
 });
 
 test("re-running the migration is a no-op", () => {

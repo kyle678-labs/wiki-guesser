@@ -32,16 +32,28 @@ const { recordDailyScore, getDailyLeaderboard, getDailyRank, getDailyEntry } = r
 const BOARD_LIMIT = 25;
 
 // The three puzzles, in the order the strip across the top of each page shows
-// them. `unit` is what a score is counted in, because "12" on a board means
-// nothing without it and the three games do not agree — carried in both forms
-// so the client never has to guess at English ("guesses" does not singularise
-// the way "moves" does).
+// them.
+//
+// `format` is how a score should be read, because "12" on a board means nothing
+// on its own and the three games do not agree. Wikidle is a `count` — the
+// guesses it took — and carries its unit in both forms so the client never has
+// to guess at English ("guesses" does not singularise the way "moves" does).
+//
+// The two picture games are `time`, in milliseconds. They are puzzles you can
+// always finish, so the interesting question is how fast rather than in how
+// few; the move count is still shown next to par, but it is not the ranking.
+// One consequence worth stating plainly: a timed puzzle can be scouted, and a
+// player who solves it once under another identity can then run a memorised
+// solution against the clock. Wikidle dropped its clock partly for that reason
+// — see the note in db.js — so this is a trade taken knowingly, not an
+// oversight.
 const GAMES = [
   {
     id: wikidle.GAME_ID,
     mod: wikidle,
     name: "Wikidle",
     path: "/daily",
+    format: "count",
     unit: "guesses",
     unitOne: "guess",
     blurb: "Name the article. Every wrong guess reveals one more word.",
@@ -51,8 +63,8 @@ const GAMES = [
     mod: tiles,
     name: "Wikitile",
     path: "/tiles",
-    unit: "moves",
-    unitOne: "move",
+    format: "time",
+    unit: "time",
     blurb: "One picture, sixteen scrambled tiles. Turn and swap them back together.",
   },
   {
@@ -60,8 +72,8 @@ const GAMES = [
     mod: match,
     name: "Wikimatch",
     path: "/match",
-    unit: "swaps",
-    unitOne: "swap",
+    format: "time",
+    unit: "time",
     blurb: "Nine pictures, nine titles, all in the wrong places. Sort them out.",
   },
 ];
@@ -107,6 +119,34 @@ function record(game, day, user, score) {
   }
 }
 
+// ── The clock ────────────────────────────────────────────────────────────────
+// Read here and nowhere else. The page shows a running time, but it is seeded
+// from this figure and never sent back — the number that reaches the board is
+// the difference between two timestamps taken by this process, so a slow, a
+// fast or a lying browser all score the same.
+
+function elapsedFor(st) {
+  // A puzzle already in progress across the deploy that introduced timing has
+  // no start. Better to start the clock now than to let a missing field read as
+  // a solve dated 1970 and take the top of the board.
+  if (!st.startedAt) st.startedAt = Date.now();
+  // Never zero. Zero sorts ahead of every honest time, and a board solved in
+  // under a millisecond is a bug report rather than a leaderboard entry.
+  return Math.max(1, Date.now() - st.startedAt);
+}
+
+// Once finished the score IS the elapsed time, frozen. Reading the live clock
+// afterwards would have a solved puzzle tick on forever.
+const liveElapsed = (st) => (st.done ? st.score : elapsedFor(st));
+
+// A timed game ends the same way whichever it is: stop the clock, and that is
+// the score.
+function finishTimed(st, gameId, day, user) {
+  st.done = true;
+  st.score = elapsedFor(st);
+  record(gameId, day, user, st.score);
+}
+
 // Fields every game's response carries, so the countdown and the "come back
 // tomorrow" copy are written once in the client rather than three times.
 const common = (puzzle, st) => ({
@@ -137,6 +177,7 @@ router.get("/api/daily", (req, res) => {
         id: g.id,
         name: g.name,
         path: g.path,
+        format: g.format,
         unit: g.unit,
         unitOne: g.unitOne,
         blurb: g.blurb,
@@ -233,6 +274,7 @@ function tilesView(puzzle, st) {
     slots: st.slots,
     rot: st.rot,
     moves: st.moves,
+    elapsedMs: liveElapsed(st),
     par: puzzle.par,
     answer: st.done ? puzzle.title : null,
     url: st.done ? wikiUrl(puzzle.title) : null,
@@ -264,11 +306,7 @@ router.post("/api/daily/tiles/move", express.json(), (req, res, next) => {
 
   if (!tiles.applyMove(st, req.body)) return res.status(400).json({ error: "That isn't a move." });
 
-  if (tiles.isSolved(st)) {
-    st.done = true;
-    st.score = st.moves;
-    record(tiles.GAME_ID, puzzle.day, user, st.score);
-  }
+  if (tiles.isSolved(st)) finishTimed(st, tiles.GAME_ID, puzzle.day, user);
 
   req.session.save((err) => (err ? next(err) : res.json(tilesView(puzzle, st))));
 });
@@ -286,6 +324,7 @@ function matchView(puzzle, st) {
     titles: puzzle.titles,
     assign: st.assign,
     moves: st.moves,
+    elapsedMs: liveElapsed(st),
     par: puzzle.par,
     // Only once it is solved, so the page can link out to nine articles it has
     // just proved it can name.
@@ -314,11 +353,7 @@ router.post("/api/daily/match/swap", express.json(), (req, res, next) => {
   const { a, b } = req.body || {};
   if (!match.applySwap(st, a, b)) return res.status(400).json({ error: "That isn't a swap." });
 
-  if (match.isSolved(st, puzzle)) {
-    st.done = true;
-    st.score = st.moves;
-    record(match.GAME_ID, puzzle.day, user, st.score);
-  }
+  if (match.isSolved(st, puzzle)) finishTimed(st, match.GAME_ID, puzzle.day, user);
 
   req.session.save((err) => (err ? next(err) : res.json(matchView(puzzle, st))));
 });
@@ -345,7 +380,15 @@ router.get("/api/daily/:game/leaderboard", (req, res) => {
     me = { rank: getDailyRank(day, game.id, mine.score, mine.created_at), name: mine.name, score: mine.score };
   }
 
-  res.json({ day, resetInMs: msUntilReset(), unit: game.unit, unitOne: game.unitOne, leaderboard: rows, me });
+  res.json({
+    day,
+    resetInMs: msUntilReset(),
+    format: game.format,
+    unit: game.unit,
+    unitOne: game.unitOne,
+    leaderboard: rows,
+    me,
+  });
 });
 
 // The endpoints that take one request per move. Declared here, next to the

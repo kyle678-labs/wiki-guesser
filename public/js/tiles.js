@@ -111,10 +111,28 @@
     boardEl.classList.toggle("solved", Boolean(state.done));
   }
 
+  // ── The clock ───────────────────────────────────────────────────────────────
+  // Display only. The score is the server's own measurement, sent back on every
+  // response; this ticks between them so the number on screen moves, and is
+  // re-seeded from the server each time one arrives rather than counting up
+  // independently and drifting away from what will actually be recorded.
+  let clockBase = 0;
+  let clockFrom = 0;
+  let clockTimer = null;
+
+  const elapsedNow = () => (state.done ? state.score : clockBase + (Date.now() - clockFrom));
+
+  function syncClock() {
+    clearInterval(clockTimer);
+    clockBase = state.elapsedMs || 0;
+    clockFrom = Date.now();
+    if (!state.done) clockTimer = setInterval(renderStatus, 1000);
+  }
+
   function renderStatus() {
     $("tile-status").textContent = state.done
       ? ""
-      : `${state.moves} move${state.moves === 1 ? "" : "s"} · par is ${state.par}`;
+      : `${WG.formatTime(elapsedNow())} · ${state.moves} move${state.moves === 1 ? "" : "s"} · par ${state.par}`;
   }
 
   function renderResult() {
@@ -123,15 +141,18 @@
     el.classList.remove("hidden");
 
     const answer = `<a href="${state.url}" target="_blank" rel="noopener">${WG.escapeHtml(state.answer)}</a>`;
-    const verdict = state.score === state.par ? "Perfect — you hit par." : `Par was ${state.par}.`;
-    el.innerHTML = `<h3 class="daily-win">Solved in ${state.score} move${state.score === 1 ? "" : "s"}.</h3>
+    // The board ranks on the clock, but the move count is still the interesting
+    // half of how you did — so it stays, next to par.
+    const moves = `${state.moves} move${state.moves === 1 ? "" : "s"}`;
+    const verdict = state.moves === state.par ? `${moves} — you hit par.` : `${moves}, par ${state.par}.`;
+    el.innerHTML = `<h3 class="daily-win">Solved in ${WG.formatTime(state.score)}.</h3>
        <p class="muted">${verdict} The picture is from ${answer}.</p>
        <button class="ghost small" id="tile-share">Copy result</button>`;
 
     $("tile-share").addEventListener("click", async () => {
       // Deliberately no picture and no article — a result you can post the
       // moment you solve it without spoiling the day for whoever reads it.
-      const text = `Wikitile ${state.day} — ${state.score} moves (par ${state.par})\n${location.origin}/tiles`;
+      const text = `Wikitile ${state.day} — ${WG.formatTime(state.score)} (${moves}, par ${state.par})\n${location.origin}/tiles`;
       try {
         await navigator.clipboard.writeText(text);
         WG.toast("Result copied!");
@@ -151,6 +172,7 @@
   function apply(next) {
     state = next;
     syncTurns(state.rot);
+    syncClock();
     render();
     WG.startDailyCountdown($("daily-reset"), state);
     if (state.done) loadBoard();

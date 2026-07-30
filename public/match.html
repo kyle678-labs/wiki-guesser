@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Wikimatch — the daily Wikipedia picture matchup</title>
-<meta name="description" content="Nine Wikipedia pictures, nine article titles, every one in the wrong place. Swap the captions until they all sit under the right picture. New puzzle at midnight UTC." />
+<meta name="description" content="Nine Wikipedia pictures, nine article titles, every one in the wrong place. Swap the captions until they all sit under the right picture. Fastest solve wins. New puzzle at midnight UTC." />
 <script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/styles.css" />
 </head>
@@ -20,7 +20,7 @@
   <div class="container">
     <header class="hero">
       <h1>Wikimatch</h1>
-      <p class="tagline">Nine Wikipedia pictures and nine article titles, every single one under the wrong picture. Put them right in as few swaps as you can.</p>
+      <p class="tagline">Nine Wikipedia pictures and nine article titles, every single one under the wrong picture. Put them right as fast as you can.</p>
       <p class="hint" id="daily-reset">Loading today's puzzle…</p>
     </header>
 
@@ -39,7 +39,7 @@
     <h2 class="section-title">Today's board</h2>
     <div class="card">
       <table class="board">
-        <thead><tr><th>#</th><th>Player</th><th id="match-unit">Swaps</th></tr></thead>
+        <thead><tr><th>#</th><th>Player</th><th id="match-unit">Time</th></tr></thead>
         <tbody id="match-leaderboard"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
       </table>
       <p class="hint" id="match-me"></p>
@@ -51,9 +51,9 @@
         <li>Everyone gets the same nine articles, shuffled the same way. They change at midnight UTC.</li>
         <li>Every caption starts under the wrong picture — none of them is right for free.</li>
         <li><strong>Tap one caption, then another</strong> to swap the two. Tap the same one again to change your mind.</li>
-        <li>Each swap counts. Your score is how many it took, so lower is better — <em>par</em> is the fewest possible.</li>
-        <li>We won't tell you which ones are right, only when all nine are. You can guess your way there, but every wrong arrangement costs you swaps.</li>
-        <li>Nothing is timed — take as long as you like. Equal scores are ranked by who got there first. One attempt per day.</li>
+        <li><strong>You're on the clock.</strong> It starts the moment the grid appears and stops when all nine are right, and that time is your score — fastest wins.</li>
+        <li>We won't tell you which ones are right, only when all nine are. You can guess your way there, but every wrong arrangement costs you time.</li>
+        <li>Swaps don't score, but <em>par</em> — the fewest a grid can be sorted in — is worth chasing anyway: the short way round is usually the quick one. One attempt per day.</li>
       </ol>
     </div>
   </div>

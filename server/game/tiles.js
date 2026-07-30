@@ -117,11 +117,20 @@ function puzzleFor(now = Date.now()) {
 // the puzzle object is cached for the whole day and shared by every player, so
 // handing out the arrays themselves would have one player's first move scramble
 // everyone else's board.
+//
+// `startedAt` is the clock, and it starts here — the moment the board is first
+// handed out — rather than on the first move. Starting it on the first move
+// would look fairer (it would not charge anyone for a slow thumbnail) but it
+// would hand the game away: a player could study the board as long as they
+// liked, plan every move, and then run a memorised solution against a clock
+// that had not started. The couple of seconds a slow connection costs is much
+// the smaller unfairness.
 function freshState(puzzle) {
   return {
     slots: puzzle.start.slots.slice(),
     rot: puzzle.start.rot.slice(),
     moves: 0,
+    startedAt: Date.now(),
     done: false,
     score: null,
   };

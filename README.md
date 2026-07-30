@@ -10,8 +10,8 @@ from its article — before the timer runs out. Highest total after all rounds w
 - **Casual quick match** — instant random matchup, no rating on the line (guests welcome).
 - **Private rooms** — create a room, share a link, play with up to 8 friends.
 - **Wikidle** — a daily solo puzzle at `/daily`: name the article from the opening words of its lead.
-- **Wikitile** — a daily picture scramble at `/tiles`: one article's picture, sixteen tiles, turned and shuffled.
-- **Wikimatch** — a daily matchup at `/match`: nine pictures, nine titles, every caption in the wrong place.
+- **Wikitile** — a daily picture scramble at `/tiles`: one article's picture, sixteen tiles, turned and shuffled. Against the clock.
+- **Wikimatch** — a daily matchup at `/match`: nine pictures, nine titles, every caption in the wrong place. Against the clock.
 - **Ads** — optional Google AdSense slots to cover server costs.
 
 Built with Node + Express + Socket.IO and SQLite. The answer and scoring live on
@@ -249,22 +249,41 @@ nowhere else, including the client, which reads the set from `/api/config`.
 Three solo puzzles, one of each per day, the same for everybody, each with its
 own leaderboard:
 
-| | Where | The puzzle | Scored in |
+| | Where | The puzzle | Scored on |
 |---|---|---|---|
-| **Wikidle** | `/daily` | Name the article from the first four words of its opening, its own name blanked out. Every wrong guess buys one more word. | guesses |
-| **Wikitile** | `/tiles` | One article's picture, cut into sixteen tiles, shuffled and turned. Tap to turn a tile, drag to swap two. | moves |
-| **Wikimatch** | `/match` | Nine pictures and nine titles, every caption under the wrong picture. Swap two captions at a time. | swaps |
+| **Wikidle** | `/daily` | Name the article from the first four words of its opening, its own name blanked out. Every wrong guess buys one more word. | guesses taken |
+| **Wikitile** | `/tiles` | One article's picture, cut into sixteen tiles, shuffled and turned. Tap to turn a tile, drag to swap two. | solve time |
+| **Wikimatch** | `/match` | Nine pictures and nine titles, every caption under the wrong picture. Swap two captions at a time. | solve time |
 
 Everything below is true of all three. Lower is always better, and the picture
 games publish a **par** — the fewest moves the day's board can be solved in
-(`swapsToSort` in `game/daily.js`) — so a score has something to be measured
-against.
+(`swapsToSort` in `game/daily.js`) — which is not the score but is worth
+chasing, because the short way round is usually the quick one.
 
-**Nothing is timed.** A tie goes to whoever got there first (`created_at`), not
-to whoever typed fastest. A stopwatch on a daily rewards racing the clue rather
-than working it out, and mostly measures typing speed. One consequence worth
-knowing: among players on the same score, earlier-in-the-UTC-day solves rank
-higher, so the board does favour whoever plays soon after midnight.
+**Two kinds of score, one column.** Both are integers where lower wins and a
+board only ever reads one game, so `daily_scores.score` holds guesses for
+Wikidle and milliseconds for the picture games; `/api/daily*` publishes a
+`format` next to the rows so nothing has to infer which from the number.
+
+**Wikidle is not timed, and the picture games are.** A word puzzle on a clock
+rewards typing speed as much as working the clue out, which is why Wikidle
+counts guesses and stores no time at all. The picture games are the opposite
+case: they are puzzles you can always finish, so "how fast" is the only
+question left. The clock is the server's — it starts when the board is handed
+out, stops when the puzzle is solved, and the browser is only ever sent the
+current figure to display, never asked for it.
+
+It starts at hand-out rather than at the first move on purpose. First-move
+timing looks fairer (nobody is charged for a slow thumbnail) but it gives the
+game away: you could study the board as long as you liked, plan every move, and
+then run a memorised solution against a clock that had not started.
+
+**A timed puzzle can be scouted**, and this is the honest cost of the change.
+Someone who solves the day's board as a guest, then plays it again signed in,
+runs a solution they already know. Nothing here defends against that — the
+defence would have to be an account requirement, which would cost more than it
+saves on a puzzle whose leaderboard resets nightly. Ties still go to whoever got
+there first (`created_at`), which for millisecond scores is close to decorative.
 
 **The day is UTC.** Local midnight would read more naturally to one player, but
 it makes a shared board incoherent — two people holding "today's" best score on
@@ -283,21 +302,25 @@ everyone too and par means the same thing on every leaderboard.
 the words you have not earned; Wikimatch keeps which caption belongs to which
 picture, and ships the pictures in one order and the titles in another with
 nothing joining them. Every guess, move and swap is applied to state held on the
-server, and the score is what the server counted — so a 1 has to be earned
-rather than claimed. Someone who looks an answer up still scores 1, but that was
-equally true when it was timed; dropping the clock costs no real defence.
+server, both clocks are read there, and the score is whatever the server
+measured — so a 1, or a 40-second solve, has to be earned rather than claimed.
+Someone who looks an answer up still scores 1; the clue was never what stopped
+that.
 
 Wikitile is the honest exception, and worth naming: a jigsaw you cannot see is
 not a jigsaw, so the picture goes out immediately and only the article's *name*
-is withheld until you finish. Nothing in that puzzle is secret except the count,
-and the count is the server's. The same soft edge applies to Wikimatch — a
+is withheld until you finish. Nothing in that puzzle is secret at all — what
+makes its board mean anything is that the server, not the page, decides when it
+is solved and how long that took. The same soft edge applies to Wikimatch — a
 Commons URL carries a filename that often names its subject, which is the trade
 the live picture rounds already make.
 
-That authority is why the two picture games post **one request per move**, and
-why those endpoints carry their own rate-limit budget (`RATE_LIMIT_DAILY_MOVES`)
-rather than spending the API's. The pages apply each move locally first and
-reconcile with the response, so play stays immediate.
+That is also why the two picture games post **one request per move**: the server
+has to hold the board to know when it is finished, and it will not take the
+page's word for that. Those endpoints carry their own rate-limit budget
+(`RATE_LIMIT_DAILY_MOVES`) rather than spending the API's. The pages apply each
+move locally first and reconcile with the response, so play stays immediate —
+which matters more now that the clock is running.
 
 Scores are stored per day and **not** per account — guests are on the board too.
 Rows carry the display name as it was at the time, are deleted after
