@@ -117,8 +117,18 @@ before(async () => {
 });
 after(async () => { await ctx.close(); });
 
-const LADDER = ladderKey("image", "party");
-const joinRanked = (s) => s.emit("queue:join", { ranked: true, clue: "image", tier: "party" });
+// Ranked runs on the chaos tier only. The tier is deliberately NOT sent here:
+// the server decides it, and a client that never mentions a tier is exactly
+// what public/js/home.js now does.
+const LADDER = ladderKey("image", "chaos");
+const joinRanked = (s) => s.emit("queue:join", { ranked: true, clue: "image" });
+
+// The manager keys queues "<kind>:<clue>:<tier>", so the ranked queue for this
+// ladder is just "ranked:" plus the ladder key. Derived rather than spelled out:
+// a stale hardcoded key returns undefined from queues.get(), and `.length` on
+// undefined throws inside an async test, which surfaces as the whole file
+// hanging rather than as an obvious mismatch.
+const RANKED_QUEUE = `ranked:${LADDER}`;
 
 test("two closely-rated players match immediately", async () => {
   const a = await accountSession(ctx.port, "Close-A", { ratings: { [LADDER]: { rating: 1200 } } });
@@ -158,7 +168,7 @@ test("distant players wait, then match once the window has widened", async () =>
 
   // Not paired yet — the gap is far outside the opening window.
   await new Promise((r) => setTimeout(r, 200));
-  assert.equal(ctx.manager.queues.get("ranked:image:party").length, 2, "still waiting");
+  assert.equal(ctx.manager.queues.get(RANKED_QUEUE).length, 2, "still waiting");
 
   // The status ticks with a wider window as the wait grows.
   const widened = await waitFor(sa, "queue:status", (s) => s.window > 100, 5000);
@@ -221,7 +231,7 @@ test("guests are still refused, and a lone ranked player is not given a bot", as
   ss.on("match:found", () => (matched = true));
   await new Promise((r) => setTimeout(r, 900)); // well past the casual bot-fill window
   assert.equal(matched, false, "no bot opponent in ranked");
-  assert.equal(ctx.manager.queues.get("ranked:image:party").length, 1, "still queued alone");
+  assert.equal(ctx.manager.queues.get(RANKED_QUEUE).length, 1, "still queued alone");
 
   sg.close();
   ss.close();
@@ -242,7 +252,7 @@ test("a ranked player who finds nobody is told, not left spinning", async () => 
 
     assert.equal(timedOut.kind, "ranked");
     assert.ok(timedOut.waitedMs >= 400);
-    assert.equal(ctx.manager.queues.get("ranked:image:party").length, 0, "and removed from the queue");
+    assert.equal(ctx.manager.queues.get(RANKED_QUEUE).length, 0, "and removed from the queue");
 
     s.close();
   } finally {
@@ -264,4 +274,63 @@ test("the ranked ticker stops when the last player leaves the queue", async () =
   assert.equal(ctx.manager.rankedTicker, null, "an idle server does no matchmaking work");
 
   s.close();
+});
+
+// ── Which ladders ranked will accept ─────────────────────────────────────────
+// queue:join is a socket event, so the picker in the browser is decoration, not
+// enforcement. A hand-rolled client — or one running yesterday's cached JS —
+// can ask for any combination it likes, and an unguarded server would happily
+// mint Elo on a ladder nobody else queues for. That is a free rating, so these
+// assert the server's own refusal rather than what the UI offers.
+
+test("ranked refuses a clue type that has no ladder", async () => {
+  const a = await accountSession(ctx.port, "Mixed-Seeker");
+  const sa = connect(ctx.port, a.cookie);
+  await once(sa, "me");
+
+  const err = once(sa, "room:error");
+  sa.emit("queue:join", { ranked: true, clue: "mixed" });
+  const e = await err;
+  // Refused, not quietly rerouted: pictures and descriptions are different
+  // games, so moving someone off the one they picked would be worse than no.
+  assert.match(e.message, /casual and private/i, `got: ${e.message}`);
+
+  sa.close();
+});
+
+test("ranked pins a stale tier request onto the ranked tier", async () => {
+  const a = await accountSession(ctx.port, "Party-Seeker");
+  const sa = connect(ctx.port, a.cookie);
+  await once(sa, "me");
+
+  const waiting = once(sa, "queue:waiting");
+  // What a browser with the previous release's JS still sends.
+  sa.emit("queue:join", { ranked: true, clue: "image", tier: "party" });
+  const w = await waiting;
+
+  // Forced rather than refused: there is one ranked tier, so the request cannot
+  // have expressed a preference between alternatives. The response has to say
+  // what is actually being searched, or the queue banner lies about the game.
+  assert.equal(w.tier, "chaos", "a party request must land on the ranked tier");
+  assert.equal(w.clue, "image");
+
+  sa.emit("queue:leave");
+  sa.close();
+});
+
+test("mixed and party remain playable in casual", async () => {
+  const a = await accountSession(ctx.port, "Casual-Mixed");
+  const sa = connect(ctx.port, a.cookie);
+  await once(sa, "me");
+
+  // Narrowing ranked must not narrow the game. Casual keeps every clue type and
+  // both tiers; that is the whole point of confining the change to the ladders.
+  const waiting = once(sa, "queue:waiting");
+  sa.emit("queue:join", { ranked: false, clue: "mixed", tier: "party" });
+  const w = await waiting;
+  assert.equal(w.clue, "mixed", "casual must still accept the combined clue");
+  assert.equal(w.tier, "party", "casual must still accept the party tier");
+
+  sa.emit("queue:leave");
+  sa.close();
 });

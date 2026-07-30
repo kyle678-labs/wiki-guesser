@@ -102,8 +102,12 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
       // For ranked this also carries the starting search window and the rating
       // being matched on, so the client can show what it is looking for from
       // the first frame rather than waiting for the first queue:status tick.
+      //
+      // `clue` and `tier` come from the result, not from the request: ranked
+      // forces the tier, so echoing what the client asked for would label the
+      // queue banner with a game it is not actually searching for.
       const { ok, error, ...status } = res;
-      socket.emit("queue:waiting", { kind, clue, ...status });
+      socket.emit("queue:waiting", { kind, ...status });
     });
 
     socket.on("queue:leave", () => {

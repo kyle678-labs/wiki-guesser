@@ -182,6 +182,19 @@ const WG = (() => {
     return (getConfig() && getConfig().modeLabels && getConfig().modeLabels[m]) || MODE_LABELS[m] || m;
   }
 
+  // What ranked will actually accept. The server decides this (see
+  // server/ladders.js) and serves it on /api/config; the fallbacks only cover a
+  // page loaded against an older server, and match what that server enforced.
+  function rankedConfig() {
+    const r = (getConfig() && getConfig().ranked) || {};
+    const tiers = r.tiers && r.tiers.length ? r.tiers : ["chaos"];
+    return {
+      modes: r.modes && r.modes.length ? r.modes : ["image", "text"],
+      tiers,
+      defaultTier: r.defaultTier || tiers[0],
+    };
+  }
+
   const TIER_LABELS = { party: "Party mix", chaos: "Total chaos" };
   function tierLabel(t) {
     return (getConfig() && getConfig().tierLabels && getConfig().tierLabels[t]) || TIER_LABELS[t] || t;
@@ -396,9 +409,12 @@ const WG = (() => {
 
   // Modal that makes the player pick one of the three modes. Resolves the chosen
   // mode key, or null if cancelled.
-  function chooseMode({ title = "Choose a mode", subtitle = "" } = {}) {
+  // `only` restricts the offered set — ranked accepts fewer clue types than
+  // casual does, and the list comes from /api/config rather than being written
+  // out here, so the picker cannot offer something the queue will refuse.
+  function chooseMode({ title = "Choose a mode", subtitle = "", only = null } = {}) {
     return new Promise((resolve) => {
-      const modes = (getConfig() && getConfig().modes) || ["image", "text", "mixed"];
+      const modes = only || (getConfig() && getConfig().modes) || ["image", "text", "mixed"];
       const blurb = {
         image: "Guess from the article's picture.",
         text: "Guess from the article's description, with the name blanked out.",
@@ -533,6 +549,6 @@ const WG = (() => {
     loadConfig, getConfig, getUser, connect, on, emit, reconnect,
     guestLogin, logout, showAuthModal, ensureUser, renderUserPill, showProfile,
     injectAds, toast, escapeHtml, avatarHtml, initTheme, chooseMode, modeLabel,
-    chooseTier, tierLabel, ladderLabel, chatEnabled, setChatEnabled,
+    chooseTier, tierLabel, ladderLabel, chatEnabled, setChatEnabled, rankedConfig,
   };
 })();

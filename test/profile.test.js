@@ -26,7 +26,7 @@ const {
 const { updatePair } = require("../server/elo");
 const { ladderKey } = require("../server/ladders");
 
-const MODE = ladderKey("image", "party");
+const MODE = ladderKey("image", "chaos");
 let seq = 0;
 const newUser = (name) => upsertOAuthUser({ provider: "test", providerId: `${name}-${seq++}`, displayName: name });
 

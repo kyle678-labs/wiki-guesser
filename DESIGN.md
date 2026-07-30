@@ -33,7 +33,7 @@ server/
   elo.js          Elo math + rank tiers
   modes.js        clue modes: image | text | mixed
   tiers.js        topic tiers: party | chaos
-  ladders.js      ranked ladder key = "<clue>:<tier>" (6 ladders)
+  ladders.js      ranked ladder key = "<clue>:<tier>"; which pairs ranked allows
   rooms.js        Room engine (round loop) + matchmaking manager + bot-fill
   socket.js       Socket.IO event wiring
   bot.js          practice bot (identity, guess logic, timing)
@@ -107,10 +107,18 @@ past it that also clears the tier's popularity floor (wrap to 0 if none). Walks
 - **Topic tier** (`tiers.js`): `party` (`popularity ≥ 1e-5`, ~top 0.1%, household
   names) and `chaos` (`popularity ≥ 2e-7` = the whole lean pool). Thresholds:
   `PARTY_MIN_POP` / `CHAOS_MIN_POP`.
-- **Ranked ladder** (`ladders.js`): every (clue × tier) pair is its own Elo ladder,
-  keyed `"<clue>:<tier>"` (e.g. `image:chaos`) → **6 ladders**. Ratings live in the
-  `ratings` table keyed by `(user_id, mode)` where `mode` is the ladder key. The
-  leaderboard picks a clue + tier (`/api/leaderboard?clue=&tier=`).
+- **Ranked ladder** (`ladders.js`): a (clue × tier) pair keyed `"<clue>:<tier>"`
+  (e.g. `image:chaos`). Ratings live in the `ratings` table keyed by
+  `(user_id, mode)` where `mode` is the ladder key.
+  **Ranked accepts only `RANKED_MODES` × `RANKED_TIERS` — `image`/`text` on
+  `chaos`, so 2 ladders, not 6.** Every extra ladder splits the same players, and
+  a rating is only meaningful if somebody close to you is waiting in it; `party`
+  is also a ~5k-article pool, small enough that repeats decide rated games, and
+  `mixed` varies the clue per round so two players on it are not measured on the
+  same skill. All three stay available in casual and private rooms.
+  Enforced in `RoomManager.enqueue` (a socket event — the picker is not a
+  control), surfaced to the client on `/api/config`, and the leaderboard lists
+  only ranked ladders.
 
 ## Scoring (`game/scoring.js`)
 

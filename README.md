@@ -160,10 +160,16 @@ is dependency-injected (see `buildServer({ roomOptions: { fetchMystery } })` in
 
 ## Game modes
 
-There are three **clue** modes, each combined with a topic **tier** to form a
-ranked ladder. You pick both before every ranked or casual match; private-room
-hosts pick them in the lobby. The tiers are Party mix (well-known) and Total
-chaos (the broader pool, still guessable).
+There are three **clue** modes, each combined with a topic **tier**. You pick
+both before a casual match; private-room hosts pick them in the lobby. The tiers
+are Party mix (well-known) and Total chaos (the broader pool, still guessable).
+
+**Ranked uses a deliberately narrower set** — Pictures or Descriptions, always
+Total chaos, so there are two ranked ladders rather than six. Combined and Party
+mix stay fully playable in casual and private rooms. See
+[`server/ladders.js`](server/ladders.js) for the reasoning; briefly, every extra
+ladder splits the same players and a rating ladder is only meaningful if there is
+somebody close to you waiting in it.
 
 - **Pictures** (`image`) — guess from the article's image.
 - **Descriptions** (`text`) — guess from the first sentence or two of the article,
@@ -222,10 +228,16 @@ scan, not per request, and served through `/api/config`.
 
 Ratings live in the `ratings` table keyed by `(user_id, mode)`, where `mode` is
 the composite **ladder key** `"<clue>:<tier>"` (e.g. `image:chaos`) — so each
-clue × tier pair is its own ladder (3 clues × 2 tiers = 6). The leaderboard picks a clue and a
-tier (`/api/leaderboard?clue=&tier=`). Matchmaking queues are split by
-kind × clue × tier, so you only ever match someone who chose the same thing.
-Ladder keys are built in `server/ladders.js`.
+clue × tier pair is rated independently. Ranked accepts two of them
+(`image:chaos`, `text:chaos`); the queue refuses any other combination, and it
+does so server-side, because `queue:join` is a socket event and the picker in
+the browser is presentation rather than enforcement. The leaderboard lists only
+ranked ladders and pulls a request for any other onto the nearest one that has
+standings (`/api/leaderboard?clue=&tier=`, which echoes back what it served).
+Matchmaking queues are split by kind × clue × tier, so you only ever match
+someone who chose the same thing. All of this derives from `RANKED_MODES` /
+`RANKED_TIERS` in `server/ladders.js` — widening ranked is an edit there and
+nowhere else, including the client, which reads the set from `/api/config`.
 
 ## Matchmaking
 
@@ -298,7 +310,7 @@ server/
   elo.js            Elo rating math + rank tiers
   modes.js          Clue modes: image | text | mixed
   tiers.js          Topic tiers: party | chaos
-  ladders.js        Ladder key "<clue>:<tier>" — 6 ranked ladders
+  ladders.js        Ladder key "<clue>:<tier>" — and which pairs ranked accepts
   matchmaking.js    Pure ranked pairing rule (search windows, closest pair)
   rooms.js          Room engine (round loop) + matchmaking manager + bot-fill
   socket.js         Socket.IO event wiring

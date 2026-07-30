@@ -48,20 +48,23 @@ test("ratings and records are tracked per ladder (clue × tier) independently", 
   const a = upsertOAuthUser({ provider: "test", providerId: "a", displayName: "Ana" });
   const b = upsertOAuthUser({ provider: "test", providerId: "b", displayName: "Ben" });
 
-  const imageParty = ladderKey("image", "party");
-  playRanked(imageParty, a, b); // Ana wins an image·party game
+  const imageChaos = ladderKey("image", "chaos");
+  playRanked(imageChaos, a, b); // Ana wins an image·chaos game
 
   const ana = getUserRatings(a.id);
   const ben = getUserRatings(b.id);
-  assert.ok(ana[imageParty].rating > 1000, "winner's image·party rating rises");
-  assert.ok(ben[imageParty].rating < 1000, "loser's image·party rating falls");
-  assert.equal(ana[imageParty].wins, 1);
-  assert.equal(ben[imageParty].losses, 1);
-  // A different clue is untouched…
-  assert.equal(ana[ladderKey("text", "party")].rating, 1000, "text·party ladder unaffected");
-  // …and so is the SAME clue on a different tier (the point of per-tier ladders).
-  assert.equal(ana[ladderKey("image", "chaos")].rating, 1000, "image·chaos is its own ladder");
-  assert.equal(ana[ladderKey("image", "chaos")].games_played, 0);
+  assert.ok(ana[imageChaos].rating > 1000, "winner's image·chaos rating rises");
+  assert.ok(ben[imageChaos].rating < 1000, "loser's image·chaos rating falls");
+  assert.equal(ana[imageChaos].wins, 1);
+  assert.equal(ben[imageChaos].losses, 1);
+  // A different clue on the same tier is untouched…
+  assert.equal(ana[ladderKey("text", "chaos")].rating, 1000, "text·chaos ladder unaffected");
+  assert.equal(ana[ladderKey("text", "chaos")].games_played, 0);
+  // …and so is the SAME clue on a different tier. Asserted through getRating
+  // rather than getUserRatings because party is no longer a ranked tier, so it
+  // is absent from the latter unless a row exists — the storage key is still
+  // composite, which is what this line is actually about.
+  assert.equal(getRating(a.id, ladderKey("image", "party")).rating, 1000, "image·party is its own key");
 });
 
 test("leaderboard is per ladder and only lists players with games", () => {
@@ -142,4 +145,29 @@ test("a swept user is touched again rather than being silently skipped", () => {
   // eventually delete an active account.
   touchSeen(u.id);
   assert.equal(touchedSize(), 1, "a returning user re-enters the map");
+});
+
+// ── Retired ladders ──────────────────────────────────────────────────────────
+
+test("a rating earned on a ladder that is no longer ranked stays visible", () => {
+  const c = upsertOAuthUser({ provider: "test", providerId: "retired", displayName: "Cass" });
+  const d = upsertOAuthUser({ provider: "test", providerId: "retired2", displayName: "Dee" });
+
+  // Ranked narrowed after launch, so rows like this can exist from before the
+  // change. The record must not vanish from the player's own profile just
+  // because the ladder was withdrawn - it happened, and it is still in the
+  // table. The queue guard in rooms.js is what stops anyone adding to it.
+  const retired = ladderKey("mixed", "party");
+  playRanked(retired, c, d);
+
+  const cass = getUserRatings(c.id);
+  assert.ok(cass[retired], "a stored rating on a retired ladder is still reported");
+  assert.ok(cass[retired].rating > 1000, "with the value that was actually earned");
+  assert.equal(cass[retired].wins, 1);
+
+  // But retired ladders are never invented for someone who never played one -
+  // that would put dead ladders on every profile forever.
+  const fresh = upsertOAuthUser({ provider: "test", providerId: "fresh", displayName: "Eve" });
+  assert.equal(getUserRatings(fresh.id)[retired], undefined, "no default is fabricated");
+  assert.ok(getUserRatings(fresh.id)[ladderKey("image", "chaos")], "current ranked ladders still default in");
 });

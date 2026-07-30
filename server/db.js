@@ -184,11 +184,23 @@ function getRating(userId, mode) {
 }
 
 // Every ladder (clue × tier) for a user, filling in defaults for unplayed ones.
+//
+// Two sources, and the second one matters more than it looks. Ranked narrowed
+// after launch (see server/ladders.js), so a rating can legitimately exist on a
+// ladder that is no longer rankable. Building this purely from LADDERS would
+// make such a rating disappear from the player's own profile — the record would
+// still be in the database, just invisible, which is the worst of both. Keep
+// showing what was earned; the queue guard is what stops anyone adding to it.
 function getUserRatings(userId) {
   const rows = stmts.getRatingsForUser.all(userId);
   const byMode = Object.fromEntries(rows.map((r) => [r.mode, r]));
   const out = {};
+  // Every current ranked ladder, so an unplayed one still has a starting
+  // rating for matchmaking to pair on.
   for (const mode of LADDERS) out[mode] = byMode[mode] || getRating(userId, mode);
+  // Plus anything actually stored on a retired ladder. Never defaults: an
+  // unplayed retired ladder is not a thing worth inventing a 1000 for.
+  for (const [mode, row] of Object.entries(byMode)) if (!(mode in out)) out[mode] = row;
   return out;
 }
 

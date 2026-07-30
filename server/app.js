@@ -29,7 +29,7 @@ const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
 const { TIERS, TIER_LABELS, normalizeTier } = require("./tiers");
-const { ladderKey } = require("./ladders");
+const { ladderKey, RANKED_MODES, RANKED_TIERS, DEFAULT_RANKED_TIER } = require("./ladders");
 const { CATEGORIES, CATEGORY_LABELS } = require("./game/categories");
 const { categoryCounts } = require("./game/pool");
 
@@ -216,6 +216,11 @@ function buildServer(overrides = {}) {
       modeLabels: MODE_LABELS,
       tiers: TIERS,
       tierLabels: TIER_LABELS,
+      // Which of the above ranked will actually accept. Casual and private
+      // rooms still use the full `modes`/`tiers` lists; only ranked is narrowed
+      // (see ladders.js for why). Served rather than hardcoded in the browser so
+      // the two can never drift — the queue guard rejects on exactly these.
+      ranked: { modes: RANKED_MODES, tiers: RANKED_TIERS, defaultTier: DEFAULT_RANKED_TIER },
       categories: CATEGORIES,
       categoryLabels: CATEGORY_LABELS,
       // Per tier and clue, so the private-room picker can show a real article
@@ -228,8 +233,15 @@ function buildServer(overrides = {}) {
   });
 
   app.get("/api/leaderboard", (req, res) => {
-    const clue = normalizeMode(req.query.clue);
-    const tier = normalizeTier(req.query.tier);
+    // Only ranked ladders have standings, so a request for anything else is
+    // pulled onto the nearest one that does rather than returning an empty
+    // table that looks like "nobody has played yet". The response echoes what
+    // was actually served, so a client asking for a retired ladder can see it
+    // was redirected instead of silently believing it got what it asked for.
+    const asked = normalizeMode(req.query.clue);
+    const clue = RANKED_MODES.includes(asked) ? asked : RANKED_MODES[0];
+    const askedTier = normalizeTier(req.query.tier);
+    const tier = RANKED_TIERS.includes(askedTier) ? askedTier : DEFAULT_RANKED_TIER;
     const mode = ladderKey(clue, tier);
     const rows = getLeaderboard(mode, 50).map((u, i) => {
       const tier = tierFor(u.rating);

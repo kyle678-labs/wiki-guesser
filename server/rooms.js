@@ -8,9 +8,9 @@ const { scoreGuess, creditLabel } = require("./game/scoring");
 const { updatePair, tierFor, START_RATING } = require("./elo");
 const { findPair, queueStatus } = require("./matchmaking");
 const { recordRankedMatch, getRating } = require("./db");
-const { normalizeMode } = require("./modes");
+const { normalizeMode, MODE_LABELS } = require("./modes");
 const { normalizeTier } = require("./tiers");
-const { ladderKey } = require("./ladders");
+const { ladderKey, RANKED_MODES, DEFAULT_RANKED_TIER } = require("./ladders");
 const { normalizeCategories } = require("./game/categories");
 const { makeBot, botGuess, botDelayMs } = require("./bot");
 
@@ -802,12 +802,35 @@ class RoomManager {
     if (kind === "ranked" && !user.ranked) {
       return { error: "Sign in with Google or Discord to play ranked." };
     }
-    const effTier = normalizeTier(tier);
-    const key = this.queueKey(kind, clue, effTier);
+
+    // Ranked runs on a narrower set than the game offers (see ladders.js). This
+    // is the enforcement point, not the UI: `queue:join` is a socket event, so
+    // a hand-rolled client — or one still running yesterday's cached JS — can
+    // ask for any combination it likes. Left unchecked that would mint Elo on a
+    // ladder nobody else queues for, which is a free rating.
+    let effClue = normalizeMode(clue);
+    let effTier = normalizeTier(tier);
+    if (kind === "ranked") {
+      // The clue is REJECTED rather than coerced. Pictures and descriptions are
+      // genuinely different games, so quietly moving somebody from the one they
+      // picked to the one we prefer is worse than telling them no.
+      if (!RANKED_MODES.includes(effClue)) {
+        return {
+          error: `${MODE_LABELS[effClue] || effClue} isn't a ranked ladder — it's available in casual and private rooms.`,
+        };
+      }
+      // The tier is FORCED rather than rejected, because there is exactly one
+      // ranked tier: a player asking for anything else cannot have meant a
+      // choice, so there is nothing to disambiguate and refusing would only
+      // strand a client that predates this rule.
+      effTier = DEFAULT_RANKED_TIER;
+    }
+
+    const key = this.queueKey(kind, effClue, effTier);
     // Drop any stale entry for this identity across all queues first.
     this.dequeue(user.id);
     const queue = this.queueFor(key);
-    const entry = this.makeEntry(user, socket, clue, effTier);
+    const entry = this.makeEntry(user, socket, effClue, effTier);
     queue.push(entry);
     this.tryMatch(key);
 
@@ -821,6 +844,9 @@ class RoomManager {
     return {
       ok: true,
       position: queue.length,
+      // Echoed back because the server may have decided these rather than the
+      // client — the queue banner should say what is actually being searched.
+      clue: effClue,
       tier: effTier,
       ...(kind === "ranked" ? queueStatus(entry, Date.now()) : {}),
     };

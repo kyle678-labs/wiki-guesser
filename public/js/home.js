@@ -87,12 +87,19 @@
       );
     }
     WG.renderUserPill(document.getElementById("user-pill"));
-    const clue = await WG.chooseMode({ title: "Ranked match", subtitle: "Pick a clue type." });
+    // No tier prompt: ranked runs on a single tier, so asking would be a
+    // question with one answer. The clue picker offers only the rankable ones —
+    // both lists come from the server, which is also what enforces them, so the
+    // picker can never offer something the queue would then refuse.
+    const ranked = WG.rankedConfig();
+    const clue = await WG.chooseMode({
+      title: "Ranked match",
+      subtitle: `Pick a clue type — ranked is always ${WG.tierLabel(ranked.defaultTier)}.`,
+      only: ranked.modes,
+    });
     if (!clue) return;
-    const tier = await WG.chooseTier({ title: "Ranked match", subtitle: "Each clue × tier is its own rating ladder." });
-    if (!tier) return;
-    WG.emit("queue:join", { ranked: true, clue, tier });
-    setQueueUi(true, `Finding a ranked ${WG.tierLabel(tier)} · ${WG.modeLabel(clue)} match`);
+    WG.emit("queue:join", { ranked: true, clue, tier: ranked.defaultTier });
+    setQueueUi(true, `Finding a ranked ${WG.tierLabel(ranked.defaultTier)} · ${WG.modeLabel(clue)} match`);
   });
 
   document.getElementById("btn-casual").addEventListener("click", async () => {
@@ -125,8 +132,31 @@
   document.getElementById("join-code").addEventListener("keydown", (e) => { if (e.key === "Enter") joinByCode(); });
 
   // ── Leaderboard ─────────────────────────────────────────────────────────────
-  let boardClue = "image";
-  let boardTier = "party";
+  // Only ranked ladders have standings, so the tabs are exactly the ranked set —
+  // rendered from /api/config rather than written into the markup, so adding a
+  // ranked ladder stays a one-file change on the server and the board follows.
+  const boardCfg = WG.rankedConfig();
+  let boardClue = boardCfg.modes[0];
+  let boardTier = boardCfg.defaultTier;
+
+  function renderBoardTabs() {
+    const tab = (attr, value, label, on) =>
+      `<button class="board-tab${on ? " active" : ""}" data-${attr}="${value}">${WG.escapeHtml(label)}</button>`;
+
+    document.getElementById("board-clue-tabs").innerHTML = boardCfg.modes
+      .map((m) => tab("clue", m, WG.modeLabel(m), m === boardClue))
+      .join("");
+
+    // A single ranked tier means there is nothing to pick between, and one tab
+    // that cannot be unselected is furniture. Hidden rather than deleted so the
+    // row reappears on its own if a second ranked tier is ever added.
+    const tierTabs = document.getElementById("board-tier-tabs");
+    tierTabs.classList.toggle("hidden", boardCfg.tiers.length < 2);
+    tierTabs.innerHTML = boardCfg.tiers
+      .map((t) => tab("tier", t, WG.tierLabel(t), t === boardTier))
+      .join("");
+  }
+
   function wireTabs(sel, onPick) {
     document.querySelectorAll(`${sel} .board-tab`).forEach((tab) =>
       tab.addEventListener("click", () => {
@@ -136,6 +166,7 @@
       })
     );
   }
+  renderBoardTabs();
   wireTabs("#board-clue-tabs", (tab) => { boardClue = tab.dataset.clue; });
   wireTabs("#board-tier-tabs", (tab) => { boardTier = tab.dataset.tier; });
 

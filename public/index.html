@@ -29,7 +29,8 @@
     <div class="mode-grid">
       <div class="card mode-card">
         <h2>Ranked match</h2>
-        <p>Get matched 1-on-1 against a similarly-rated player. Win to climb the Elo ladder and rank up your tier.</p>
+        <p>Get matched 1-on-1 against a similarly-rated player. Win to climb the Elo ladder and rank up your tier.
+          Ranked is Pictures or Descriptions, always Total chaos — Combined and Party mix are casual and private rooms.</p>
         <div class="row">
           <button class="primary" id="btn-ranked">Find ranked match</button>
           <span class="hint">Account required</span>
@@ -77,15 +78,10 @@
     <div class="ad-slot" data-ad="mid">Ad space</div>
 
     <h2 class="section-title">Global leaderboard</h2>
-    <div class="board-tabs" id="board-clue-tabs">
-      <button class="board-tab active" data-clue="image">Pictures</button>
-      <button class="board-tab" data-clue="text">Descriptions</button>
-      <button class="board-tab" data-clue="mixed">Combined</button>
-    </div>
-    <div class="board-tabs" id="board-tier-tabs">
-      <button class="board-tab active" data-tier="party">Party mix</button>
-      <button class="board-tab" data-tier="chaos">Total chaos</button>
-    </div>
+    <!-- Filled by home.js from /api/config: only ranked ladders have standings,
+         and which those are is the server's decision (see server/ladders.js). -->
+    <div class="board-tabs" id="board-clue-tabs"></div>
+    <div class="board-tabs hidden" id="board-tier-tabs"></div>
     <div class="card">
       <table class="board">
         <thead><tr><th>#</th><th>Player</th><th>Tier</th><th>Rating</th><th>W/L/D</th></tr></thead>
