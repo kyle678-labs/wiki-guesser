@@ -468,7 +468,7 @@ const WG = (() => {
     el.innerHTML = `
       ${rank}
       <button class="pill pill-profile" id="pill-profile" title="Your profile, history and account settings">
-        ${avatarHtml(u.name, u.avatar, "sm")} ${escapeHtml(u.name)}</button>
+        ${avatarHtml(u.name, u.avatar, "sm")} <span class="pill-name">${escapeHtml(u.name)}</span></button>
       <button class="ghost small" id="pill-logout">Log out</button>`;
     el.querySelector("#pill-profile").addEventListener("click", () => showProfile());
     el.querySelector("#pill-logout").addEventListener("click", async () => {
