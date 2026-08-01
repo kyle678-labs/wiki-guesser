@@ -749,6 +749,8 @@ button.danger:hover { background: var(--red); border-color: var(--red); color: #
   background: var(--bg3); color: var(--muted); vertical-align: middle;
 }
 .tag-ban { background: var(--score); color: #fff; }
+/* Something currently in effect and benign — a notice on the site right now. */
+.tag-live { background: var(--green); color: var(--tile-ink); }
 
 .report { margin-bottom: 0.8rem; }
 .report-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
@@ -770,3 +772,55 @@ button.danger:hover { background: var(--red); border-color: var(--red); color: #
 .ban-form input { flex: 1 1 16rem; width: auto; }
 .ban-form select { flex: 0 0 9rem; width: auto; }
 .player-detail h3 { font-size: 1rem; margin-bottom: 0.3rem; }
+
+/* ── Site notices ─────────────────────────────────────────────────────────────
+   Whatever an operator pinned from /admin, stacked in the bottom-right until
+   dismissed. Fixed rather than in the flow: a notice that pushed the lobby down
+   would move the buttons under someone's cursor as it arrived.
+
+   Above the page but BELOW the modal backdrop and the toast — an auth modal or
+   a "copied!" toast is a response to something the player just did, and must
+   never be covered by an announcement they did not ask for. */
+.notice-stack {
+  position: fixed; right: 1rem; bottom: 1rem; z-index: 30;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  width: min(22rem, calc(100vw - 2rem));
+}
+/* On a phone the stack is nearly full width, which would sit on top of the
+   toast at bottom-centre. Lift it clear rather than relying on the toast's
+   higher z-index to stay readable through a card. */
+@media (max-width: 520px) {
+  .notice-stack { bottom: 4.5rem; }
+}
+.notice {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-left: 3px solid var(--progressive);
+  border-radius: 2px; padding: 0.7rem 0.8rem;
+  box-shadow: 0 2px 8px var(--shadow);
+  animation: notice-in 0.18s ease-out;
+}
+.notice p { flex: 1; font-size: 0.9rem; line-height: 1.5; overflow-wrap: anywhere; }
+/* warn is for "the server restarts at 9pm" — louder, still not an error. */
+.notice-warn { border-left-color: var(--score); }
+
+.notice-x {
+  flex: 0 0 auto; background: none; border: none; padding: 0 0.15rem;
+  font-size: 1.15rem; line-height: 1; color: var(--muted); cursor: pointer;
+}
+.notice-x:hover { background: none; border: none; color: var(--text); }
+
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(0.4rem); }
+  to   { opacity: 1; transform: none; }
+}
+/* Someone who has asked for less motion still gets the notice, just not the
+   slide — the animation is decoration, the message is the point. */
+@media (prefers-reduced-motion: reduce) {
+  .notice { animation: none; }
+}
+
+/* The admin composer for the above. */
+.notice-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
+.notice-form input[type="text"] { flex: 1 1 20rem; width: auto; }
+.notice-form select { flex: 0 0 8rem; width: auto; }

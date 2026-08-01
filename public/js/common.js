@@ -7,7 +7,79 @@ const WG = (() => {
   async function loadConfig() {
     const res = await fetch("/api/config", { credentials: "same-origin" });
     config = await res.json();
+    // Notices are rendered as a side effect of loading config, which is not the
+    // tidiest thing in this file but is the right trade: every page on the site
+    // already awaits loadConfig, so hanging the render here means a NEW page
+    // gets notices for free instead of by somebody remembering to call
+    // something. Cheap and idempotent — it does nothing when nothing is pinned.
+    try { renderNotices(); } catch (e) { console.error("notices failed to render", e); }
     return config;
+  }
+
+  // ── Site notices ────────────────────────────────────────────────────────────
+  // Whatever an operator has pinned from /admin, as dismissible cards in the
+  // corner. Dismissal is per browser and per notice, held in localStorage: there
+  // is no account requirement to read one, so there is nowhere else to put it.
+  const DISMISSED_KEY = "wg-dismissed-notices";
+
+  function readDismissed() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DISMISSED_KEY) || "[]");
+      return Array.isArray(raw) ? raw.filter((n) => Number.isInteger(n)) : [];
+    } catch { return []; }
+  }
+
+  function writeDismissed(ids) {
+    try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(ids)); } catch (e) {}
+  }
+
+  function renderNotices() {
+    const all = (config && config.notices) || [];
+    document.getElementById("wg-notices")?.remove();
+    if (!all.length) {
+      // Nothing pinned any more, so the dismissal list has nothing left to
+      // suppress. Clearing it stops the key growing without bound across the
+      // life of a browser profile.
+      if (readDismissed().length) writeDismissed([]);
+      return;
+    }
+
+    // Ids that no longer exist are dropped on every render, so this stays the
+    // size of what is actually pinned rather than a running log.
+    const live = all.map((n) => n.id);
+    const dismissed = readDismissed().filter((id) => live.includes(id));
+    writeDismissed(dismissed);
+
+    const showing = all.filter((n) => !dismissed.includes(n.id));
+    if (!showing.length) return;
+
+    const box = document.createElement("div");
+    box.id = "wg-notices";
+    box.className = "notice-stack";
+    // role="status" rather than "alert": these are announcements, not errors,
+    // and an alert interrupts a screen reader mid-sentence.
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+    box.innerHTML = showing
+      .map(
+        (n) => `<div class="notice notice-${n.level === "warn" ? "warn" : "info"}" data-notice="${n.id}">
+          <p>${escapeHtml(n.message)}</p>
+          <button class="notice-x" aria-label="Dismiss this notice">&times;</button>
+        </div>`
+      )
+      .join("");
+
+    box.addEventListener("click", (e) => {
+      const btn = e.target.closest(".notice-x");
+      if (!btn) return;
+      const card = btn.closest(".notice");
+      const id = parseInt(card.dataset.notice, 10);
+      writeDismissed([...readDismissed(), id]);
+      card.remove();
+      if (!box.querySelector(".notice")) box.remove();
+    });
+
+    document.body.appendChild(box);
   }
 
   function getConfig() { return config; }

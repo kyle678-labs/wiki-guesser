@@ -23,7 +23,7 @@ SqliteStore.prototype.startInterval = function () {
 const config = require("./config");
 const log = require("./log");
 const metrics = require("./metrics");
-const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled } = require("./db");
+const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled, activeNotices } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
 const { router: dailyRouter, MOVE_PATHS } = require("./dailies");
 const { buildAdminRouter } = require("./admin");
@@ -249,6 +249,11 @@ function buildServer(overrides = {}) {
       // null when there is no pool on disk (tests, or a failed S3 fetch) — the
       // picker then simply shows no counts.
       categoryCounts: categoryCounts(),
+      // Anything an operator has pinned from /admin. Carried here rather than on
+      // an endpoint of its own because every page already awaits this one, so a
+      // notice costs no extra round trip — and the read is served from memory
+      // (see activeNotices in db.js), so it costs no query either.
+      notices: activeNotices(),
       user: getSessionUser(req),
     });
   });

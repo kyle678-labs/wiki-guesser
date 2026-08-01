@@ -46,6 +46,11 @@ const {
   searchUsers,
   adminUserDetail,
   getUserById,
+  NOTICE_LEVELS,
+  NOTICE_MAX_LEN,
+  listNotices,
+  createNotice,
+  deleteNotice,
 } = require("./db");
 
 // How much of each list the dashboard pulls at once. Small on purpose: these are
@@ -268,6 +273,47 @@ function buildAdminRouter({ manager, io }) {
     const removed = unbanUser(userId);
     log.warn("admin_unban", { userId, by: req.admin.userId, existed: removed });
     res.json({ ok: true, removed });
+  });
+
+  // ── Notices ────────────────────────────────────────────────────────────────
+  // A pinned message every visitor sees in the corner of the page until they
+  // dismiss it. Not addressed to anyone and not a reply to anything — see the
+  // note on the table in db.js for why it deliberately stays that way.
+  router.get("/api/admin/notices", (req, res) => res.json({ notices: listNotices() }));
+
+  router.post("/api/admin/notices", json, (req, res) => {
+    const message = String((req.body && req.body.message) || "").trim();
+    if (!message) return res.status(400).json({ error: "Type a message first." });
+
+    const level = String(req.body.level || "info");
+    if (!NOTICE_LEVELS.includes(level)) {
+      return res.status(400).json({ error: `level must be one of: ${NOTICE_LEVELS.join(", ")}.` });
+    }
+
+    // Same shape as a suspension: a number of days, or omitted for "until I
+    // unpin it". An operator who pins "back in 20 minutes" and forgets is the
+    // failure this makes cheap to avoid.
+    const rawDays = req.body.days;
+    let expiresAt = null;
+    if (rawDays != null && rawDays !== "") {
+      const days = Number(rawDays);
+      if (!Number.isFinite(days) || days <= 0 || days > 365) {
+        return res.status(400).json({ error: "days must be between 1 and 365, or omitted." });
+      }
+      expiresAt = Date.now() + days * 24 * 60 * 60 * 1000;
+    }
+
+    const id = createNotice({ message, level, expiresAt, byUserId: req.admin.userId });
+    log.info("admin_notice_pinned", { id, by: req.admin.userId, level, until: expiresAt });
+    res.json({ ok: true, id, notices: listNotices() });
+  });
+
+  router.delete("/api/admin/notices/:id", (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Bad notice id." });
+    const removed = deleteNotice(id);
+    log.info("admin_notice_unpinned", { id, by: req.admin.userId, existed: removed });
+    res.json({ ok: true, removed, notices: listNotices() });
   });
 
   // ── Players ────────────────────────────────────────────────────────────────

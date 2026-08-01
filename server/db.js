@@ -147,6 +147,26 @@ db.exec(`
     created_by  INTEGER
   );
 
+  -- Site notices: a short message an operator pins from /admin, shown to every
+  -- visitor as a dismissible card in the corner of the page.
+  --
+  -- Deliberately not addressed to anyone. There is no recipient column and no
+  -- read receipts: this is a notice board, not a messaging system, and the
+  -- moment it grows a "to" it becomes something that needs a privacy policy
+  -- entry and a deletion path. What is stored is a sentence somebody typed.
+  --
+  -- expires_at NULL means "until it is unpinned", which is a DELETE — there is
+  -- no archive worth keeping of a message that said the server would be down on
+  -- Tuesday.
+  CREATE TABLE IF NOT EXISTS notices (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    message    TEXT NOT NULL,
+    level      TEXT NOT NULL DEFAULT 'info',   -- info | warn
+    created_at INTEGER NOT NULL,
+    created_by INTEGER,
+    expires_at INTEGER
+  );
+
   CREATE INDEX IF NOT EXISTS idx_ratings_mode_rating ON ratings(mode, rating DESC);
 
   -- The queue is read newest-first within a status, and swept by age.
@@ -405,6 +425,19 @@ const stmts = {
   recentSignups: db.prepare(
     "SELECT id, display_name, avatar_url, provider, created_at, last_seen FROM users ORDER BY created_at DESC LIMIT ?"
   ),
+  // ── Notices ───────────────────────────────────────────────────────────────
+  insertNotice: db.prepare(`
+    INSERT INTO notices (message, level, created_at, created_by, expires_at)
+    VALUES (@message, @level, @created_at, @created_by, @expires_at)
+  `),
+  // Every notice, expired or not: the admin list has to show a lapsed one so it
+  // can be told apart from one that was never pinned.
+  allNotices: db.prepare("SELECT * FROM notices ORDER BY created_at DESC LIMIT ?"),
+  deleteNotice: db.prepare("DELETE FROM notices WHERE id = ?"),
+  deleteExpiredNoticesBefore: db.prepare(
+    "DELETE FROM notices WHERE expires_at IS NOT NULL AND expires_at < ?"
+  ),
+
   // Name search. The pattern is a bound parameter like everything else here —
   // ESCAPE is about LIKE's own wildcards, not about SQL injection, which
   // binding already rules out. Without it a search for "100%" matches every
@@ -804,6 +837,85 @@ const listBans = (limit = 100) =>
     active: b.expires_at == null || b.expires_at > Date.now(),
   }));
 
+// ── Site notices ─────────────────────────────────────────────────────────────
+// Pinned from /admin, served to every visitor inside /api/config.
+//
+// CACHED IN FULL, and that is the whole point of the design. /api/config is
+// fetched by every page load on the site, so an uncached read here would put a
+// SQLite query on the event loop for every visitor — exactly the cost the
+// leaderboard cache exists to avoid, reintroduced through a different door.
+//
+// The cache holds every row rather than only the live ones, and `activeNotices`
+// filters by expiry on each READ — not when the cache is filled. That is what
+// makes expiry exact to the millisecond with no TTL at all: a notice pinned for
+// an hour stops being served on the hour, without anything having to write.
+//
+// This rests on one assumption, which is currently true and would be easy to
+// break: `expires_at` is set at INSERT and never updated. There is no "edit the
+// expiry" path, so a cached row's expiry is always the real one. If an edit is
+// ever added it MUST call invalidateNotices(), or the site will keep serving a
+// notice against a stale deadline.
+//
+// A lapsed row stays in the table for the admin list, and is swept later by the
+// retention job.
+const NOTICE_LEVELS = ["info", "warn"];
+const NOTICE_MAX_LEN = 280;
+// How many a visitor can be shown at once. A corner of the screen holding six
+// cards is not a notice, it is a wall, and the newest is the one that matters.
+const NOTICE_SHOWN = 3;
+const NOTICE_LIST_LIMIT = 50;
+
+let noticeCache = null;
+const invalidateNotices = () => { noticeCache = null; };
+
+function allNotices() {
+  if (!noticeCache) noticeCache = stmts.allNotices.all(NOTICE_LIST_LIMIT);
+  return noticeCache;
+}
+
+// What the site shows: unexpired, newest first, capped. Shaped for the browser
+// here so /api/config never has to know the column names.
+function activeNotices(now = Date.now()) {
+  return allNotices()
+    .filter((n) => n.expires_at == null || n.expires_at > now)
+    .slice(0, NOTICE_SHOWN)
+    .map((n) => ({ id: n.id, message: n.message, level: n.level }));
+}
+
+// The admin list: everything, with the expiry left in so a lapsed notice reads
+// as lapsed rather than as missing.
+const listNotices = () =>
+  allNotices().map((n) => ({
+    id: n.id,
+    message: n.message,
+    level: n.level,
+    at: n.created_at,
+    expiresAt: n.expires_at,
+    active: n.expires_at == null || n.expires_at > Date.now(),
+  }));
+
+function createNotice({ message, level = "info", expiresAt = null, byUserId = null }) {
+  // Same treatment chat and reports get: angle brackets stripped and a hard cap,
+  // so nothing stored can carry markup even before the client escapes it.
+  const text = String(message || "").replace(/[<>]/g, "").trim().slice(0, NOTICE_MAX_LEN);
+  if (!text) throw new Error("createNotice: empty message");
+  const info = stmts.insertNotice.run({
+    message: text,
+    level: NOTICE_LEVELS.includes(level) ? level : "info",
+    created_at: Date.now(),
+    created_by: byUserId,
+    expires_at: expiresAt,
+  });
+  invalidateNotices();
+  return info.lastInsertRowid;
+}
+
+function deleteNotice(id) {
+  const changed = stmts.deleteNotice.run(id).changes > 0;
+  if (changed) invalidateNotices();
+  return changed;
+}
+
 // ── Admin views ──────────────────────────────────────────────────────────────
 
 // The overview numbers. All counts, all indexed or over small tables, so this is
@@ -875,6 +987,14 @@ function purgeExpiredBans(days = 30) {
   return stmts.deleteExpiredBansBefore.run(Date.now() - days * 24 * 60 * 60 * 1000).changes;
 }
 
+// A notice that lapsed a month ago is clutter in the admin list and nothing
+// else. Swept on the same schedule; one still showing is never touched.
+function purgeExpiredNotices(days = 30) {
+  const n = stmts.deleteExpiredNoticesBefore.run(Date.now() - days * 24 * 60 * 60 * 1000).changes;
+  if (n) invalidateNotices();
+  return n;
+}
+
 module.exports = {
   db,
   recordDailyScore,
@@ -910,6 +1030,14 @@ module.exports = {
   adminUserDetail,
   purgeOldReports,
   purgeExpiredBans,
+  // Site notices: pinned from /admin, served inside /api/config.
+  NOTICE_LEVELS,
+  NOTICE_MAX_LEN,
+  activeNotices,
+  listNotices,
+  createNotice,
+  deleteNotice,
+  purgeExpiredNotices,
   // Exported for tests. The activity map is internal state that no query or
   // response reveals, so a leak in it is invisible from the outside — and
   // sweepTouched takes `now` as an argument precisely so a test can advance the

@@ -329,6 +329,74 @@ test("deleting an account takes its reports and its suspension with it", async (
   assert.equal(db.prepare("SELECT 1 FROM bans WHERE user_id = ?").get(doomed.user.id), undefined);
 });
 
+// ── Site notices ─────────────────────────────────────────────────────────────
+// The thing worth asserting is that a pinned notice reaches an ORDINARY
+// visitor's /api/config — that is the whole feature, and it is the one part an
+// admin cannot check by looking at their own dashboard.
+
+test("a pinned notice reaches every visitor, and unpinning takes it away", async () => {
+  const pinned = json(
+    await postJson(srv.port, "/api/admin/notices", { message: "Server restarts at 9pm.", level: "warn" }, admin.cookie)
+  );
+  assert.equal(pinned.ok, true);
+  assert.ok(pinned.notices.some((n) => n.id === pinned.id && n.active));
+
+  // A signed-out stranger, not the admin: this is what the site actually serves.
+  const cfg = json(await helpers.get(srv.port, "/api/config"));
+  const seen = cfg.notices.find((n) => n.id === pinned.id);
+  assert.ok(seen, "the notice should be in the config every page already fetches");
+  assert.equal(seen.message, "Server restarts at 9pm.");
+  assert.equal(seen.level, "warn");
+  assert.equal(seen.createdBy, undefined, "who pinned it is nobody's business but ours");
+
+  const removed = json(await del(srv.port, `/api/admin/notices/${pinned.id}`, admin.cookie));
+  assert.equal(removed.removed, true);
+  const after = json(await helpers.get(srv.port, "/api/config"));
+  assert.ok(!after.notices.some((n) => n.id === pinned.id), "unpinning takes it off the site at once");
+});
+
+test("a notice cannot carry markup, and is capped in length", async () => {
+  const res = json(
+    await postJson(srv.port, "/api/admin/notices", { message: "<script>alert(1)</script> hi " + "x".repeat(400) }, admin.cookie)
+  );
+  const stored = res.notices.find((n) => n.id === res.id);
+  assert.ok(!stored.message.includes("<"), "angle brackets are stripped server-side");
+  assert.ok(stored.message.length <= 280, `capped, got ${stored.message.length}`);
+  await del(srv.port, `/api/admin/notices/${res.id}`, admin.cookie);
+});
+
+test("a notice expires while sitting in the cache, with no write to trigger it", async () => {
+  const { db: raw, activeNotices, createNotice } = require("../server/db");
+  // Pinned with a real expiry through the ordinary path, then simply waited out.
+  // Nothing writes in between, and no TTL elapses — the point is that the filter
+  // runs on every READ, so a cached row stops being served the moment its own
+  // expiry passes. A cache that filtered when it was FILLED would keep showing
+  // this until the next unrelated pin.
+  const id = createNotice({ message: "Back in ten minutes", level: "info", expiresAt: Date.now() + 60 });
+  assert.ok(activeNotices().some((n) => n.id === id), "still in force when pinned");
+
+  await new Promise((r) => setTimeout(r, 90));
+
+  assert.ok(!activeNotices().some((n) => n.id === id), "an expired notice must not keep showing");
+  // It survives in the table for the admin list until the retention sweep.
+  assert.ok(raw.prepare("SELECT 1 FROM notices WHERE id = ?").get(id));
+  raw.prepare("DELETE FROM notices WHERE id = ?").run(id);
+});
+
+test("bad notices are refused", async () => {
+  for (const body of [{ message: "   " }, { message: "ok", level: "shouty" }, { message: "ok", days: 0 }, { message: "ok", days: 999 }]) {
+    const res = await postJson(srv.port, "/api/admin/notices", body, admin.cookie);
+    assert.equal(res.status, 400, `should have refused ${JSON.stringify(body)}`);
+  }
+});
+
+test("only an admin can pin one", async () => {
+  const res = await postJson(srv.port, "/api/admin/notices", { message: "I am in charge now" }, player.cookie);
+  assert.equal(res.status, 404, "same 404 as every other admin route");
+  const cfg = json(await helpers.get(srv.port, "/api/config"));
+  assert.ok(!cfg.notices.some((n) => n.message.includes("in charge")));
+});
+
 // ── Wording ──────────────────────────────────────────────────────────────────
 
 test("a ban explains itself in one sentence, and never counts down to zero", () => {

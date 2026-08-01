@@ -2,7 +2,14 @@
 
 const config = require("./config");
 const log = require("./log");
-const { db, purgeInactiveAccounts, purgeOldDailyScores, purgeOldReports, purgeExpiredBans } = require("./db");
+const {
+  db,
+  purgeInactiveAccounts,
+  purgeOldDailyScores,
+  purgeOldReports,
+  purgeExpiredBans,
+  purgeExpiredNotices,
+} = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
 const { warmPartyIndex, warmCategoryCounts } = require("./game/pool");
@@ -66,6 +73,9 @@ function runRetentionSweep() {
       days: modDays,
       reports: purgeOldReports(modDays),
       expiredBans: purgeExpiredBans(modDays),
+      // A notice that lapsed a month ago is clutter in the admin list and
+      // nothing else. One still showing is never touched, whatever its age.
+      expiredNotices: purgeExpiredNotices(modDays),
     });
   } catch (err) {
     log.error("retention_sweep_failed", { err });

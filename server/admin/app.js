@@ -89,6 +89,7 @@
     }
     if (next === "reports") loadReports();
     if (next === "bans") loadBans();
+    if (next === "notices") loadNotices();
   }
 
   document.querySelectorAll("#admin-tabs .board-tab").forEach((b) =>
@@ -333,6 +334,89 @@
       loadBans();
     } catch (err) {
       unban.disabled = false;
+      WG.toast(err.message);
+    }
+  });
+
+  // ── Notices ────────────────────────────────────────────────────────────────
+
+  function renderNotices(notices) {
+    const el = $("notices-list");
+    const live = notices.filter((n) => n.active).length;
+    $("notice-count").textContent = live
+      ? `${live} notice${live === 1 ? "" : "s"} showing on the site right now.`
+      : "Nothing pinned — visitors see no notices.";
+
+    if (!notices.length) {
+      el.innerHTML = `<div class="card"><p class="muted">No notices yet.</p></div>`;
+      return;
+    }
+    el.innerHTML =
+      `<div class="card"><table class="board">
+        <thead><tr><th>Message</th><th>Level</th><th>State</th><th>Pinned</th><th></th></tr></thead><tbody>` +
+      notices
+        .map(
+          (n) => `<tr>
+            <td>${esc(n.message)}</td>
+            <td>${n.level === "warn" ? `<span class="tag tag-ban">important</span>` : `<span class="tag">info</span>`}</td>
+            <td>${n.active
+              ? `<span class="tag tag-live">${n.expiresAt ? esc(untilLabel(n.expiresAt)) : "showing"}</span>`
+              : `<span class="tag">expired</span>`}</td>
+            <td>${stamp(n.at)}</td>
+            <td><button class="small" data-unpin="${n.id}">Unpin</button></td>
+          </tr>`
+        )
+        .join("") +
+      `</tbody></table></div>`;
+  }
+
+  async function loadNotices() {
+    try {
+      renderNotices((await api("/api/admin/notices")).notices);
+    } catch (err) {
+      fail($("notices-list"), err);
+    }
+  }
+
+  $("notice-pin").addEventListener("click", async () => {
+    const btn = $("notice-pin");
+    const msg = $("notice-msg").value.trim();
+    if (!msg) return WG.toast("Type a message first.");
+    btn.disabled = true;
+    try {
+      // The response carries the new list, so pinning does not need a second
+      // round trip to show what it did.
+      const { notices } = await api("/api/admin/notices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: msg,
+          level: $("notice-level").value,
+          days: $("notice-days").value === "" ? null : Number($("notice-days").value),
+        }),
+      });
+      $("notice-msg").value = "";
+      renderNotices(notices);
+      WG.toast("Pinned — it is live now.");
+    } catch (err) {
+      WG.toast(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $("notice-msg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("notice-pin").click(); });
+
+  $("notices-list").addEventListener("click", async (e) => {
+    const unpin = e.target.closest("[data-unpin]");
+    if (!unpin) return;
+    unpin.disabled = true;
+    try {
+      const { notices } = await api(`/api/admin/notices/${unpin.dataset.unpin}`, { method: "DELETE" });
+      renderNotices(notices);
+      WG.toast("Unpinned.");
+    } catch (err) {
+      unpin.disabled = false;
       WG.toast(err.message);
     }
   });

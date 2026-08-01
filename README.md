@@ -502,6 +502,53 @@ An admin cannot suspend themselves or anyone else on the allowlist. That reads a
 paranoia until you picture the alternative — the only operator locked out of
 their own game by their own dashboard.
 
+### Notices
+
+A short message pinned from the dashboard and shown to every visitor as a
+dismissible card in the corner of the page — "server restarts at 9pm", "the
+daily is broken, working on it". Optionally set to expire after a number of
+days, otherwise it stays until unpinned.
+
+It rides inside `/api/config`, which every page already fetches, so a notice
+costs **no extra request and no extra query**: `activeNotices` in `db.js` holds
+every row in memory and filters by expiry on each read. That filtering happens on
+read rather than when the cache is filled, which is what makes an expiry exact
+with no TTL — a notice pinned for an hour stops being served on the hour, with
+nothing having to write. The one assumption that rests on is that `expires_at` is
+set at insert and never edited; add an edit path and it has to invalidate.
+
+Dismissal is per browser, in `localStorage`, keyed by notice id — there is no
+account requirement to read the site, so there is nowhere else to put it. Ids
+that no longer exist are pruned on every render, so the key stays the size of
+what is pinned rather than becoming a running log.
+
+Deliberately **not** a messaging system: no recipient, no reply, no read
+receipts. The moment it grows a "to" it needs a privacy policy entry and a
+deletion path, and it stops being a notice board.
+
+## What a page load costs the database
+
+The landing page is the one URL that scales with *visitors* rather than with
+concurrent players, so it is worth being precise about what it touches.
+
+**For a signed-out visitor: nothing.** Not "one cheap query" — zero. `/api/config`
+serves static config, `categoryCounts()` (a single grouped scan, warmed at boot),
+and `activeNotices()` (held in memory, invalidated on write). `getSessionUser`
+returns `null` without a read when there is no session. `/api/leaderboard` is
+served from a 30-second cache keyed on `mode:limit`.
+
+**The leaderboard cache is invalidated on write as well as by TTL.**
+`recordRankedMatch` is the only thing that moves a rating and it clears the
+cache, so the ladder is never actually stale — the TTL is just a backstop for
+out-of-band writes like `scripts/migrate-ratings-to-tiers.js` against a live
+database. `LEADERBOARD_TTL_MS` tunes it. Asserted in `test/db.test.js`: a repeat
+read returns the *same array instance*, and a new result replaces it.
+
+**A signed-in visitor costs three small indexed reads** — the user row, their
+ratings, and their ban state — resolved once per request by `accountIdentity`.
+Those are inherently per-session and there is nothing to cache; `last_seen`
+writes are throttled to one per user per hour on top.
+
 ## How scoring works
 
 Each guess earns the higher of two **accuracy** scores:

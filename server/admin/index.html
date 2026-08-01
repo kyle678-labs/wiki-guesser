@@ -26,6 +26,7 @@
       <button class="board-tab active" data-tab="overview">Overview</button>
       <button class="board-tab" data-tab="reports">Reports <span class="admin-count" id="tab-report-count"></span></button>
       <button class="board-tab" data-tab="bans">Bans</button>
+      <button class="board-tab" data-tab="notices">Notices</button>
       <button class="board-tab" data-tab="players">Players</button>
     </div>
 
@@ -68,6 +69,33 @@
         </p>
       </div>
       <div id="bans-list"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Notices ─────────────────────────────────────────────────────── -->
+    <section class="admin-pane hidden" id="pane-notices">
+      <div class="card">
+        <h3>Pin a notice</h3>
+        <p class="hint" style="margin-bottom:0.7rem">
+          Shown to everyone in the corner of every page until they dismiss it. Dismissal is per browser,
+          so a returning visitor who closed it will not see it again — pin a new one rather than editing.
+        </p>
+        <div class="notice-form">
+          <input type="text" id="notice-msg" maxlength="280" placeholder="e.g. Server restarts at 9pm UK — games in progress will end." />
+          <select id="notice-level">
+            <option value="info">Info</option>
+            <option value="warn">Important</option>
+          </select>
+          <select id="notice-days">
+            <option value="">Until I unpin it</option>
+            <option value="1">1 day</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+          </select>
+          <button class="primary" id="notice-pin">Pin</button>
+        </div>
+        <p class="hint" id="notice-count"></p>
+      </div>
+      <div id="notices-list"><p class="muted">Loading…</p></div>
     </section>
 
     <!-- ── Players ─────────────────────────────────────────────────────── -->
