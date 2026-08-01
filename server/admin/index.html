@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin — Wiki-Guesser</title>
+<!-- Nothing here should ever be indexed, linked or previewed. The routes 404
+     for anyone not on the allowlist, so this is belt-and-braces for a crawler
+     that somehow arrives holding an admin session cookie. -->
+<meta name="robots" content="noindex, nofollow, noarchive" />
+<meta name="referrer" content="no-referrer" />
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand"><a href="/">Wiki-Guesser</a> <span class="admin-badge">admin</span></div>
+    <div class="nav-right">
+      <button class="theme-toggle" data-theme-toggle title="Toggle theme">Theme</button>
+      <span class="pill" id="admin-me">…</span>
+    </div>
+  </nav>
+
+  <div class="container admin">
+    <div class="admin-tabs" id="admin-tabs">
+      <button class="board-tab active" data-tab="overview">Overview</button>
+      <button class="board-tab" data-tab="reports">Reports <span class="admin-count" id="tab-report-count"></span></button>
+      <button class="board-tab" data-tab="bans">Bans</button>
+      <button class="board-tab" data-tab="players">Players</button>
+    </div>
+
+    <!-- ── Overview ────────────────────────────────────────────────────── -->
+    <section class="admin-pane" id="pane-overview">
+      <div class="stat-grid" id="stat-grid"></div>
+
+      <h2 class="section-title">Right now</h2>
+      <div class="card" id="live-card"><p class="muted">Loading…</p></div>
+
+      <h2 class="section-title">Process</h2>
+      <div class="card" id="process-card"><p class="muted">Loading…</p></div>
+
+      <h2 class="section-title">Newest accounts</h2>
+      <div class="card">
+        <table class="board">
+          <thead><tr><th>#</th><th>Player</th><th>Via</th><th>Joined</th><th>Last seen</th></tr></thead>
+          <tbody id="signups-body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Reports ─────────────────────────────────────────────────────── -->
+    <section class="admin-pane hidden" id="pane-reports">
+      <div class="admin-filters" id="report-filters">
+        <button class="board-tab active" data-status="open">Open</button>
+        <button class="board-tab" data-status="actioned">Actioned</button>
+        <button class="board-tab" data-status="dismissed">Dismissed</button>
+        <button class="board-tab" data-status="all">All</button>
+      </div>
+      <div id="reports-list"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Bans ────────────────────────────────────────────────────────── -->
+    <section class="admin-pane hidden" id="pane-bans">
+      <div class="card">
+        <p class="hint">
+          Only accounts can be suspended. A guest identity is a cookie — the next guest session is a new
+          one — so a report against a guest has nobody to act on beyond dismissing it.
+        </p>
+      </div>
+      <div id="bans-list"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- ── Players ─────────────────────────────────────────────────────── -->
+    <section class="admin-pane hidden" id="pane-players">
+      <div class="card">
+        <div class="share-row">
+          <input type="text" id="player-q" placeholder="Search by display name, or paste an account id" autocomplete="off" />
+          <button class="primary" id="player-search">Search</button>
+        </div>
+      </div>
+      <div id="players-result"></div>
+      <div id="player-detail"></div>
+    </section>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/admin/app.js"></script>
+</body>
+</html>

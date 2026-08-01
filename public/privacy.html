@@ -123,15 +123,27 @@
       </p>
       <p>
         <strong>Reported messages are the one exception.</strong> When a player uses the report button on a message,
-        that single message is written to our server log so a human can look at it. We record the message text, the
-        display name and account ID of whoever sent it, the display name and account ID of whoever reported it, the
-        room, and the time. Nothing else from the conversation is kept — not the messages around it, and not the
-        messages nobody reported.
+        that single message is saved to a moderation queue so a human can look at it, and also written to our server
+        log. We record the message text, the display name and account ID of whoever sent it, the display name and
+        account ID of whoever reported it, the room, and the time. Nothing else from the conversation is kept — not
+        the messages around it, and not the messages nobody reported.
       </p>
       <p>
         We do this to keep the game usable: without it, a report would tell us that something happened but never what.
         Our lawful basis is our legitimate interest in protecting players from abuse. Reported messages are deleted
-        with the rest of our server logs, on the schedule in the table below.
+        automatically after 30 days, whether or not anyone acted on them, on the schedule in the table below. If you
+        delete your account, the reports involving you — as sender or as reporter — go with it immediately.
+      </p>
+
+      <h3>Suspensions</h3>
+      <p>
+        If we suspend an account we record which account, why, when, how long for, and which administrator did it. You
+        are shown the reason when you try to play, so nothing is held about you here that you have not been told. A
+        suspended account can still read the site, but cannot play, queue, chat or enter the daily puzzles.
+      </p>
+      <p>
+        Our lawful basis is our legitimate interest in protecting players from abuse. A suspension record is deleted 30
+        days after it expires, and immediately if you delete your account.
       </p>
       <p>
         You can turn chat off for yourself at any time from your profile or from the chat panel in a game, and the host
@@ -212,6 +224,7 @@
           <tr><td>Account profile, session, gameplay and ranking data</td><td><strong>Performance of a contract</strong> — you asked us to run a game for you, and we can't without it.</td></tr>
           <tr><td>Server logs, rate-limit counters</td><td><strong>Legitimate interests</strong> — keeping the service available, secure, and free of abuse. We've weighed this against your privacy and limited both what we log and how long we keep it.</td></tr>
           <tr><td>A chat message someone reported, and who sent and reported it</td><td><strong>Legitimate interests</strong> — protecting players from abuse and harassment. Only a message a player has explicitly reported is kept, never the surrounding conversation.</td></tr>
+          <tr><td>A suspension: the account, the reason, the dates and who applied it</td><td><strong>Legitimate interests</strong> — protecting players from abuse and harassment, and being able to say why a decision was made. You are shown the reason yourself.</td></tr>
         </tbody>
       </table>
 
@@ -225,7 +238,8 @@
           <tr><td>Account profile, ratings and match history</td><td>Until you delete it — there is a button in your profile — or after 24 months of inactivity, whichever comes first. The inactivity sweep runs automatically every day.</td></tr>
           <tr><td>Daily puzzle scores (including guest names, and solve times for the two picture puzzles)</td><td>30 days, then deleted automatically. Deleting your account removes yours immediately.</td></tr>
           <tr><td>Chat messages</td><td>Not stored at all — except the one case in the row below</td></tr>
-          <tr><td>A chat message someone reported</td><td>Kept in our server logs, then deleted automatically after 30 days</td></tr>
+          <tr><td>A chat message someone reported</td><td>30 days in our moderation queue and server logs, then deleted automatically. Deleting your account removes yours immediately.</td></tr>
+          <tr><td>A suspension record</td><td>Until 30 days after it expires. A permanent suspension is kept while the account exists; deleting the account removes it.</td></tr>
         </tbody>
       </table>
 

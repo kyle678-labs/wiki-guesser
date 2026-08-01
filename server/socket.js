@@ -2,6 +2,7 @@
 
 const { RoomManager } = require("./rooms");
 const { identityFromSession } = require("./auth");
+const { banMessage } = require("./moderation");
 const { SocketLimiter, DEFAULT_SOCKET_LIMITS } = require("./ratelimit");
 const config = require("./config");
 const log = require("./log");
@@ -39,6 +40,18 @@ function attachSockets(io, sessionMiddleware, opts = {}) {
     const user = identityFromSession(socket.request.session);
     // Anonymous sockets can listen but not act; they're handled below.
     if (!user) return next();
+
+    // A ban is enforced at the handshake, which is the whole of multiplayer in
+    // one place: no socket means no queue, no room, no chat, and no way to
+    // reach any of them by hand-rolling a client. Refusing here rather than
+    // disconnecting afterwards also gets the reason to the player — a socket
+    // torn down mid-emit may never deliver it — and socket.io-client does not
+    // retry a middleware rejection, so a banned account is not left in a
+    // reconnect loop against a door that will not open.
+    if (user.banned) {
+      log.warn("banned_socket_refused", { user: user.id, until: user.banned.until });
+      return next(new Error(banMessage(user.banned)));
+    }
 
     let held = socketsPerIdentity.get(user.id);
     if (!held) socketsPerIdentity.set(user.id, (held = new Set()));

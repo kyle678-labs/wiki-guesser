@@ -12,6 +12,28 @@
   if (params.get("error") === "auth_failed") WG.toast("Sign-in failed — please try again.");
   if (params.get("error")) history.replaceState({}, "", "/");
 
+  // A suspended account is refused at the socket handshake and by the daily
+  // routes, which without this would look like a site that has simply stopped
+  // working. Say it plainly and once, at the top of the page they land on.
+  renderBanNotice();
+  function renderBanNotice() {
+    const me = WG.getUser();
+    if (!me || !me.banned) return;
+    const { reason, until } = me.banned;
+    const lifts = until == null
+      ? "This suspension is permanent."
+      : `It lifts on ${new Date(until).toLocaleString()}.`;
+    const card = document.createElement("div");
+    card.className = "card ban-notice";
+    card.innerHTML =
+      `<h2>Your account is suspended</h2>
+       <p>${WG.escapeHtml(lifts)} You can still read the site, but not play, queue or chat.</p>` +
+      (reason ? `<p class="muted">Reason: ${WG.escapeHtml(reason)}</p>` : "");
+    const grid = document.querySelector(".mode-grid");
+    if (grid) grid.before(card);
+    else document.querySelector(".container").prepend(card);
+  }
+
   const gotoRoom = (code) => (window.location = `/room/${code}`);
 
   // Navigation into a room happens once the server confirms membership.

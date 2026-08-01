@@ -23,6 +23,7 @@ const express = require("express");
 
 const log = require("./log");
 const { getSessionUser } = require("./auth");
+const { banMessage } = require("./moderation");
 const { dayKey, msUntilReset } = require("./game/daily");
 const wikidle = require("./game/wikidle");
 const tiles = require("./game/tiles");
@@ -99,6 +100,14 @@ function ready(req, res, mod) {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ error: "Choose a name or sign in to play the daily." });
+    return null;
+  }
+  // A suspended account is kept off the boards too, not just out of multiplayer.
+  // Every daily result publishes a display name next to a score, which is the
+  // same public surface a ban is meant to remove someone from — and a board is
+  // the one place left where a banned player could still be seen by everybody.
+  if (user.banned) {
+    res.status(403).json({ error: banMessage(user.banned) });
     return null;
   }
   const puzzle = mod.puzzleFor();

@@ -9,6 +9,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "test": "node --test \"test/*.test.js\"",
+    "accounts": "node scripts/list-accounts.js",
     "check:pool": "node scripts/check-pool.js",
     "drill:restore": "node scripts/backup-restore-drill.js"
   },

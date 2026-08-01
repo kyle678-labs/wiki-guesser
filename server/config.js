@@ -138,6 +138,30 @@ const config = {
     rankedTimeoutMs: int(process.env.MM_RANKED_TIMEOUT_MS, 3 * 60 * 1000),
   },
 
+  // ── Admin ────────────────────────────────────────────────────────────────
+  // Who can reach /admin: a comma-separated list of numeric account ids from
+  // the `users` table. `npm run accounts` prints them.
+  //
+  // An environment allowlist rather than a role column on the row, for two
+  // reasons. Granting admin becomes a deploy instead of an UPDATE, so it leaves
+  // a trace in the same place every other change to this service does; and a
+  // database an attacker can write to still cannot hand them the dashboard.
+  //
+  // Empty by default, and empty means the admin routes 404 for everyone —
+  // including on a box where the variable was never set, which is the failure
+  // mode you want when a deploy drops an env file.
+  admin: {
+    userIds: new Set(
+      String(process.env.ADMIN_USER_IDS || "")
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => Number.isInteger(n) && n > 0)
+    ),
+    get enabled() {
+      return this.userIds.size > 0;
+    },
+  },
+
   // Automatic erasure of dormant accounts. This exists to keep the retention
   // table in public/privacy.html true: it promises accounts are deleted after
   // 24 months of inactivity, and a promise nothing enforces is worse than no
@@ -150,6 +174,12 @@ const config = {
     // carries a display name. Swept on the same schedule as dormant accounts.
     // Keep in step with the retention table in public/privacy.html.
     dailyScoreDays: parseInt(process.env.DAILY_SCORE_DAYS, 10) || 30,
+    // A chat report is a work item, not an archive: once it has been dealt with
+    // it has served its purpose, and until then it is holding a chat message and
+    // two display names. Thirty days is what privacy.html already promises for a
+    // reported message, so the queue expires on the same clock the logs do.
+    // Expired bans are swept on the same schedule, measured from their expiry.
+    reportDays: parseInt(process.env.REPORT_DAYS, 10) || 30,
   },
 
   // A signed-in player legitimately has a tab or two open; nobody needs six.

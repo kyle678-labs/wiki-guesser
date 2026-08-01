@@ -90,7 +90,71 @@ db.exec(`
     UNIQUE(day, game, identity)
   );
 
+  -- A chat message somebody reported, held as a work item for the moderation
+  -- queue at /admin. Until this table existed a report went to the application
+  -- log and nowhere else, which told an operator that something happened but
+  -- gave them nothing to act on and no way to mark it dealt with.
+  --
+  -- Deliberately NOT joined to users, for the same reason daily_scores is not:
+  -- guests both send and report messages, and a report has to keep reading
+  -- correctly after a display name changes or the account behind it is deleted.
+  -- The identity columns hold the session identity ("u12" or "g_..."); the
+  -- *_user_id columns are the numeric account id where there is one, and NULL
+  -- for a guest — which is also what says whether there is anything to ban.
+  --
+  -- The message text is copied in rather than referenced. Chat is never
+  -- otherwise written to disk (see public/privacy.html), so this row IS the
+  -- message, and the surrounding conversation is deliberately not captured.
+  --
+  -- UNIQUE is the one-report-per-person-per-message rule. Room.reportChat also
+  -- refuses a duplicate in memory, but a room lives and dies with the process
+  -- and this constraint does not.
+  CREATE TABLE IF NOT EXISTS chat_reports (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at        INTEGER NOT NULL,
+    room_code         TEXT NOT NULL,
+    ranked            INTEGER NOT NULL DEFAULT 0,
+    is_private        INTEGER NOT NULL DEFAULT 0,
+    message_id        TEXT NOT NULL,
+    message_at        INTEGER NOT NULL,
+    message_text      TEXT NOT NULL,
+    author_identity   TEXT NOT NULL,
+    author_user_id    INTEGER,
+    author_name       TEXT NOT NULL,
+    reporter_identity TEXT NOT NULL,
+    reporter_user_id  INTEGER,
+    reporter_name     TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'open',   -- open | actioned | dismissed
+    resolved_at       INTEGER,
+    resolved_by       INTEGER,
+    note              TEXT,
+    UNIQUE(room_code, message_id, reporter_identity)
+  );
+
+  -- One row per banned account, keyed by the account: a ban is a current state
+  -- rather than a history, so re-banning someone replaces their row instead of
+  -- stacking. expires_at NULL is permanent; a row whose expiry has passed stays
+  -- put until the retention sweep, so an operator can still see it happened.
+  --
+  -- Only accounts can be banned. A guest identity is a cookie — banning one
+  -- would be theatre, since the next guest session is a fresh id. That is the
+  -- honest limit of this feature and the admin UI says so where it applies.
+  CREATE TABLE IF NOT EXISTS bans (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id),
+    reason      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER,
+    created_by  INTEGER
+  );
+
   CREATE INDEX IF NOT EXISTS idx_ratings_mode_rating ON ratings(mode, rating DESC);
+
+  -- The queue is read newest-first within a status, and swept by age.
+  CREATE INDEX IF NOT EXISTS idx_reports_queue ON chat_reports(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_age ON chat_reports(created_at);
+  -- "What else has this player been reported for" is the question an operator
+  -- asks before acting on any single report.
+  CREATE INDEX IF NOT EXISTS idx_reports_author ON chat_reports(author_user_id);
 
   -- Exactly the shape the board is read in: one day, one game, best first,
   -- earliest solver ahead on a tie.
@@ -261,6 +325,97 @@ const stmts = {
   deleteMatches: db.prepare("DELETE FROM matches WHERE a_user_id = ? OR b_user_id = ?"),
   deleteUser: db.prepare("DELETE FROM users WHERE id = ?"),
   findInactive: db.prepare("SELECT id, display_name, last_seen FROM users WHERE COALESCE(last_seen, created_at) < ?"),
+
+  // ── Moderation ────────────────────────────────────────────────────────────
+  insertReport: db.prepare(`
+    INSERT OR IGNORE INTO chat_reports
+      (created_at, room_code, ranked, is_private, message_id, message_at, message_text,
+       author_identity, author_user_id, author_name,
+       reporter_identity, reporter_user_id, reporter_name)
+    VALUES
+      (@created_at, @room_code, @ranked, @is_private, @message_id, @message_at, @message_text,
+       @author_identity, @author_user_id, @author_name,
+       @reporter_identity, @reporter_user_id, @reporter_name)
+  `),
+  // @status = 'all' selects everything; anything else filters. One statement
+  // rather than two so the queue and the archive can never drift in shape.
+  listReports: db.prepare(`
+    SELECT * FROM chat_reports
+     WHERE (@status = 'all' OR status = @status)
+     ORDER BY created_at DESC, id DESC
+     LIMIT @limit OFFSET @offset
+  `),
+  getReport: db.prepare("SELECT * FROM chat_reports WHERE id = ?"),
+  // Only ever moves a report OUT of 'open'. Re-resolving one that is already
+  // closed is a no-op rather than an error: two admins clicking at once should
+  // agree on the first answer, not race to overwrite it.
+  resolveReport: db.prepare(`
+    UPDATE chat_reports
+       SET status = @status, resolved_at = @resolved_at, resolved_by = @resolved_by, note = @note
+     WHERE id = @id AND status = 'open'
+  `),
+  reportCounts: db.prepare("SELECT status, COUNT(*) AS n FROM chat_reports GROUP BY status"),
+  // How often this account has been reported, and how much of that was upheld —
+  // the context that separates one angry opponent from a pattern.
+  reportsAgainst: db.prepare(`
+    SELECT COUNT(*) AS total,
+           SUM(CASE WHEN status = 'actioned' THEN 1 ELSE 0 END) AS actioned
+      FROM chat_reports WHERE author_user_id = ?
+  `),
+  recentReportsAgainst: db.prepare(`
+    SELECT * FROM chat_reports WHERE author_user_id = ? ORDER BY created_at DESC LIMIT ?
+  `),
+  deleteReportsBefore: db.prepare("DELETE FROM chat_reports WHERE created_at < ?"),
+  deleteReportsForIdentity: db.prepare(
+    "DELETE FROM chat_reports WHERE author_identity = ? OR reporter_identity = ?"
+  ),
+
+  upsertBan: db.prepare(`
+    INSERT INTO bans (user_id, reason, created_at, expires_at, created_by)
+    VALUES (@user_id, @reason, @created_at, @expires_at, @created_by)
+    ON CONFLICT(user_id) DO UPDATE SET
+      reason = @reason, created_at = @created_at, expires_at = @expires_at, created_by = @created_by
+  `),
+  getBan: db.prepare("SELECT * FROM bans WHERE user_id = ?"),
+  deleteBan: db.prepare("DELETE FROM bans WHERE user_id = ?"),
+  listBans: db.prepare(`
+    SELECT b.*, u.display_name, u.avatar_url, a.display_name AS by_name
+      FROM bans b
+      JOIN users u ON u.id = b.user_id
+      LEFT JOIN users a ON a.id = b.created_by
+     ORDER BY b.created_at DESC
+     LIMIT ?
+  `),
+  // Expired long enough ago that the record has stopped being useful. A ban
+  // still in force is never touched, whatever its age.
+  deleteExpiredBansBefore: db.prepare(
+    "DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at < ?"
+  ),
+
+  // ── Admin views ───────────────────────────────────────────────────────────
+  countUsers: db.prepare("SELECT COUNT(*) AS n FROM users"),
+  countUsersSince: db.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?"),
+  countActiveSince: db.prepare("SELECT COUNT(*) AS n FROM users WHERE COALESCE(last_seen, created_at) >= ?"),
+  countMatches: db.prepare("SELECT COUNT(*) AS n FROM matches"),
+  countMatchesSince: db.prepare("SELECT COUNT(*) AS n FROM matches WHERE created_at >= ?"),
+  countBans: db.prepare("SELECT COUNT(*) AS n FROM bans WHERE expires_at IS NULL OR expires_at > ?"),
+  dailyPlaysToday: db.prepare(
+    "SELECT game, COUNT(*) AS n FROM daily_scores WHERE day = ? GROUP BY game"
+  ),
+  recentSignups: db.prepare(
+    "SELECT id, display_name, avatar_url, provider, created_at, last_seen FROM users ORDER BY created_at DESC LIMIT ?"
+  ),
+  // Name search. The pattern is a bound parameter like everything else here —
+  // ESCAPE is about LIKE's own wildcards, not about SQL injection, which
+  // binding already rules out. Without it a search for "100%" matches every
+  // player on the site.
+  searchUsers: db.prepare(`
+    SELECT id, display_name, avatar_url, provider, created_at, last_seen
+      FROM users
+     WHERE display_name LIKE @q ESCAPE '\\' OR id = @id
+     ORDER BY COALESCE(last_seen, created_at) DESC, id DESC
+     LIMIT @limit
+  `),
 };
 
 // Find-or-create a user from an OAuth profile.
@@ -477,17 +632,27 @@ function getRecentMatches(userId, limit = 10) {
 // `false`, so any session still pointing at this id simply stops being signed
 // in — there is no orphaned-session state to clean up.
 const deleteAccountTx = db.transaction((userId) => {
-  // Order matters: `ratings` and `matches` both carry a foreign key onto
+  // Order matters: `ratings`, `matches` and `bans` all carry a foreign key onto
   // `users`, and foreign_keys is ON.
   const matches = stmts.deleteMatches.run(userId, userId).changes;
   const ratings = stmts.deleteRatings.run(userId).changes;
+  // A ban is a fact about an account, so it goes when the account does. There
+  // is nothing left to keep out: the next sign-in through the same provider
+  // creates a new row with a new id, which is a real limit of banning by
+  // account and is stated as such in the admin UI.
+  const bans = stmts.deleteBan.run(userId).changes;
   // Daily results have no foreign key — guests earn them too — so nothing would
   // have cascaded here. They still carry a display name, which makes them the
   // player's data and squarely inside what the privacy policy promises to
   // erase. Matched on the identity string an account resolves to.
   const dailies = stmts.deleteDailyForIdentity.run(`u${userId}`).changes;
+  // Same reasoning, and the same lack of a foreign key: a report holds a chat
+  // message this player wrote and the display names of both sides. Erasure
+  // means erasure, so their reports go with everything else — on either side of
+  // the report, because a reporter's name is their data too.
+  const reports = stmts.deleteReportsForIdentity.run(`u${userId}`, `u${userId}`).changes;
   const users = stmts.deleteUser.run(userId).changes;
-  return { matches, ratings, dailies, deleted: users > 0 };
+  return { matches, ratings, bans, dailies, reports, deleted: users > 0 };
 });
 
 function deleteAccount(userId) {
@@ -544,6 +709,172 @@ function purgeOldDailyScores(days = 30) {
   return stmts.deleteDailyBefore.run(cutoff).changes;
 }
 
+// ── Moderation ───────────────────────────────────────────────────────────────
+// Everything the /admin dashboard reads and writes. Two tables, and the split
+// between them is deliberate: a report is a message somebody complained about,
+// a ban is a decision about an account. Resolving a report never bans anyone and
+// banning somebody never closes a report — the operator does both, separately,
+// because "this message was fine" and "this player is fine" are different
+// findings and conflating them makes the queue lie.
+
+const REPORT_STATUSES = ["open", "actioned", "dismissed"];
+
+// Store a reported message. Returns false when this reporter has already
+// reported this message, which the UNIQUE constraint decides rather than a
+// read-then-write — two tabs racing produce one row either way.
+function recordChatReport(r) {
+  const info = stmts.insertReport.run({
+    created_at: Date.now(),
+    room_code: r.roomCode,
+    ranked: r.ranked ? 1 : 0,
+    is_private: r.isPrivate ? 1 : 0,
+    message_id: r.messageId,
+    message_at: r.messageAt,
+    message_text: r.messageText,
+    author_identity: r.authorIdentity,
+    author_user_id: r.authorUserId || null,
+    author_name: r.authorName,
+    reporter_identity: r.reporterIdentity,
+    reporter_user_id: r.reporterUserId || null,
+    reporter_name: r.reporterName,
+  });
+  return info.changes > 0;
+}
+
+const listChatReports = ({ status = "open", limit = 50, offset = 0 } = {}) =>
+  stmts.listReports.all({ status, limit, offset });
+
+const getChatReport = (id) => stmts.getReport.get(id) || null;
+
+// Close a report. Returns false if it was already closed — see the note on the
+// statement for why that is an answer rather than an error.
+function resolveChatReport({ id, status, note = null, adminId = null }) {
+  if (!REPORT_STATUSES.includes(status) || status === "open") {
+    throw new Error(`resolveChatReport: bad status ${status}`);
+  }
+  const info = stmts.resolveReport.run({
+    id,
+    status,
+    note: note ? String(note).slice(0, 500) : null,
+    resolved_at: Date.now(),
+    resolved_by: adminId,
+  });
+  return info.changes > 0;
+}
+
+function reportCounts() {
+  const out = { open: 0, actioned: 0, dismissed: 0 };
+  for (const row of stmts.reportCounts.all()) out[row.status] = row.n;
+  return out;
+}
+
+// A ban is only in force while it has not expired. Everything that asks "can
+// this player play" goes through here, so there is one definition of active and
+// an expired row cannot accidentally keep somebody out.
+function activeBan(userId, now = Date.now()) {
+  if (!userId) return null;
+  const row = stmts.getBan.get(userId);
+  if (!row) return null;
+  if (row.expires_at != null && row.expires_at <= now) return null;
+  return { reason: row.reason || "", until: row.expires_at, at: row.created_at };
+}
+
+function banUser({ userId, reason = "", expiresAt = null, byUserId = null }) {
+  stmts.upsertBan.run({
+    user_id: userId,
+    reason: String(reason || "").slice(0, 500),
+    created_at: Date.now(),
+    expires_at: expiresAt,
+    created_by: byUserId,
+  });
+  return activeBan(userId);
+}
+
+const unbanUser = (userId) => stmts.deleteBan.run(userId).changes > 0;
+
+const listBans = (limit = 100) =>
+  stmts.listBans.all(limit).map((b) => ({
+    userId: b.user_id,
+    name: b.display_name,
+    avatar: b.avatar_url,
+    reason: b.reason,
+    at: b.created_at,
+    until: b.expires_at,
+    byName: b.by_name || null,
+    active: b.expires_at == null || b.expires_at > Date.now(),
+  }));
+
+// ── Admin views ──────────────────────────────────────────────────────────────
+
+// The overview numbers. All counts, all indexed or over small tables, so this is
+// cheap enough to poll — which matters, because a dashboard nobody leaves open
+// is a dashboard nobody reads.
+function adminStats({ day, now = Date.now() } = {}) {
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const DAY = 24 * 60 * 60 * 1000;
+  const dailies = {};
+  for (const row of stmts.dailyPlaysToday.all(day)) dailies[row.game] = row.n;
+  return {
+    accounts: stmts.countUsers.get().n,
+    accountsNew7d: stmts.countUsersSince.get(now - WEEK).n,
+    activeToday: stmts.countActiveSince.get(now - DAY).n,
+    active7d: stmts.countActiveSince.get(now - WEEK).n,
+    rankedMatches: stmts.countMatches.get().n,
+    rankedMatches7d: stmts.countMatchesSince.get(now - WEEK).n,
+    dailyPlaysToday: dailies,
+    reports: reportCounts(),
+    activeBans: stmts.countBans.get(now).n,
+  };
+}
+
+const recentSignups = (limit = 10) => stmts.recentSignups.all(limit);
+
+// Find a player to act on. An all-digits query is also tried as an id, because
+// a report names an account id and pasting it in is the fastest route from
+// "this row" to "this person".
+function searchUsers(query, limit = 25) {
+  const q = String(query || "").trim().slice(0, 60);
+  if (!q) return [];
+  const asId = /^\d+$/.test(q) ? parseInt(q, 10) : -1;
+  const escaped = q.replace(/[\\%_]/g, "\\$&");
+  return stmts.searchUsers.all({ q: `%${escaped}%`, id: asId, limit });
+}
+
+// Everything about one player, in one place: who they are, how they are rated,
+// what they have been reported for, and whether they are currently banned.
+function adminUserDetail(userId, { matchLimit = 10, reportLimit = 10 } = {}) {
+  const user = stmts.getUser.get(userId);
+  if (!user) return null;
+  const against = stmts.reportsAgainst.get(userId) || { total: 0, actioned: 0 };
+  return {
+    id: user.id,
+    name: user.display_name,
+    avatar: user.avatar_url,
+    provider: user.provider,
+    createdAt: user.created_at,
+    lastSeen: user.last_seen,
+    chatEnabled: user.chat_enabled !== 0,
+    ratings: stmts.getRatingsForUser.all(userId),
+    matches: getRecentMatches(userId, matchLimit),
+    ban: activeBan(userId),
+    reportsAgainst: { total: against.total || 0, actioned: against.actioned || 0 },
+    recentReports: stmts.recentReportsAgainst.all(userId, reportLimit),
+  };
+}
+
+// ── Moderation retention ─────────────────────────────────────────────────────
+// A report holds a chat message and two display names, and a ban holds a reason
+// somebody wrote about a player. Neither is kept indefinitely. Swept alongside
+// the daily boards — see runRetentionSweep in index.js — and kept in step with
+// the retention table in public/privacy.html.
+function purgeOldReports(days = 30) {
+  return stmts.deleteReportsBefore.run(Date.now() - days * 24 * 60 * 60 * 1000).changes;
+}
+
+function purgeExpiredBans(days = 30) {
+  return stmts.deleteExpiredBansBefore.run(Date.now() - days * 24 * 60 * 60 * 1000).changes;
+}
+
 module.exports = {
   db,
   recordDailyScore,
@@ -562,6 +893,23 @@ module.exports = {
   getRecentMatches,
   deleteAccount,
   purgeInactiveAccounts,
+  // Moderation: the report queue, bans, and the admin dashboard's reads.
+  REPORT_STATUSES,
+  recordChatReport,
+  listChatReports,
+  getChatReport,
+  resolveChatReport,
+  reportCounts,
+  activeBan,
+  banUser,
+  unbanUser,
+  listBans,
+  adminStats,
+  recentSignups,
+  searchUsers,
+  adminUserDetail,
+  purgeOldReports,
+  purgeExpiredBans,
   // Exported for tests. The activity map is internal state that no query or
   // response reveals, so a leak in it is invisible from the outside — and
   // sweepTouched takes `now` as an argument precisely so a test can advance the

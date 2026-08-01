@@ -2,7 +2,7 @@
 
 const config = require("./config");
 const log = require("./log");
-const { db, purgeInactiveAccounts, purgeOldDailyScores } = require("./db");
+const { db, purgeInactiveAccounts, purgeOldDailyScores, purgeOldReports, purgeExpiredBans } = require("./db");
 const { buildServer } = require("./app");
 const { createShutdown } = require("./shutdown");
 const { warmPartyIndex, warmCategoryCounts } = require("./game/pool");
@@ -55,6 +55,18 @@ function runRetentionSweep() {
     const days = config.retention.dailyScoreDays;
     const rows = purgeOldDailyScores(days);
     log.info("daily_scores_purged", { days, rows });
+
+    // The moderation queue expires too. A report holds a chat message and two
+    // display names — the one place chat is written down at all — and privacy
+    // .html promises it goes after 30 days. Bans that have already expired are
+    // swept on the same clock, measured from when they lifted; one still in
+    // force is never touched, however old.
+    const modDays = config.retention.reportDays;
+    log.info("reports_purged", {
+      days: modDays,
+      reports: purgeOldReports(modDays),
+      expiredBans: purgeExpiredBans(modDays),
+    });
   } catch (err) {
     log.error("retention_sweep_failed", { err });
   }

@@ -61,6 +61,26 @@ function get(port, urlPath, cookie) {
   });
 }
 
+// DELETE, with the same keep-alive-disabled treatment. Its own function rather
+// than a method argument on `get` so the call sites still read as the verb they
+// are using — the admin API removes a suspension with DELETE, and a test that
+// reached for POST would be testing a route that does not exist.
+function del(port, urlPath, cookie) {
+  return new Promise((resolve, reject) => {
+    const headers = { Connection: "close" };
+    if (cookie) headers.Cookie = cookie;
+    const req = http.request({ host: "localhost", port, path: urlPath, method: "DELETE", agent: false, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () =>
+        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })
+      );
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function tempDataDir() {
   const dir = path.join(os.tmpdir(), "wiki-guesser-test-" + crypto.randomBytes(6).toString("hex"));
   fs.mkdirSync(dir, { recursive: true });
@@ -188,5 +208,5 @@ function waitFor(sock, event, pred, ms = EVENT_TIMEOUT_MS) {
 
 // postJson exposed so tests can drive endpoints directly (e.g. rate limits).
 module.exports = {
-  tempDataDir, startTestServer, guestSession, accountSession, connect, once, waitFor, get, postJson,
+  tempDataDir, startTestServer, guestSession, accountSession, connect, once, waitFor, get, postJson, del,
 };

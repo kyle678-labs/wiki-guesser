@@ -52,6 +52,8 @@ the code in the other to try a full multiplayer round.
 | `SHUTDOWN_GRACE_MS` | How long SIGTERM waits for games to drain before forcing the exit. |
 | `PRELOAD_PARTY` / `PARTY_PRELOAD_MAX_ROWS` | Hold the party tier in memory (default on) — it removes the app's biggest event-loop stall. |
 | `DAILY_SCORE_DAYS` | How long daily puzzle scores are kept (default 30). Each row carries a display name, so keep this equal to the retention stated in public/privacy.html. |
+| `ADMIN_USER_IDS` | Comma-separated account ids that may reach `/admin`. **Unset (the default) means the admin routes are never mounted at all** — see [Admin dashboard](#admin-dashboard). Find your id with `npm run accounts`. |
+| `REPORT_DAYS` | How long a reported chat message is kept (default 30), and how long after expiry a suspension record is. A report is the only case in which chat touches disk, so keep this equal to the figure in public/privacy.html. |
 | `STMT_CACHE_MAX` | How many compiled mystery-pick statements to keep (default 512). One per clue column × exclusion size × category mask, so it is bounded by an LRU rather than left to grow with the number of category combinations players pick. |
 | `LEADERBOARD_TTL_MS` / `METRICS_INTERVAL_MS` | Leaderboard cache TTL; how often the metrics line is logged. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth. Redirect URI: `{BASE_URL}/auth/google/callback`. |
@@ -110,6 +112,12 @@ intentions, so keep them in step:
   thereafter, measured against `users.last_seen` (refreshed, at most hourly, on
   any request that resolves the account). `INACTIVE_PURGE_MONTHS` and the number
   on the policy page must match.
+- **Reported messages and suspensions expire.** `purgeOldReports` and
+  `purgeExpiredBans` run on the same daily sweep, at `REPORT_DAYS`. A report is
+  the one circumstance in which a chat message is written to disk at all, so the
+  policy page names both the storage and the number — change one, change both.
+  Account deletion takes a player's reports (on either side) and their
+  suspension with it, in the same transaction as everything else.
 
 ## Tests
 
@@ -407,6 +415,93 @@ clue and tier decide which ladder the Elo is written to, so an edit during the
 pre-match countdown would be a way onto a ladder the player never queued for.
 Private rooms remain fully configurable by their host.
 
+## Admin dashboard
+
+`/admin` — the moderation queue, suspensions, a player lookup, and a live view of
+rooms, queues and process health. Built from `server/admin.js` (the routes) and
+`server/admin/` (the page).
+
+**Access is an environment allowlist.** `ADMIN_USER_IDS` holds account ids; you
+sign in with Google or Discord exactly as any player does, and being on the list
+is what grants the dashboard. There is no admin password, no second login form,
+and no role column on the row. Two reasons for the environment rather than the
+database: granting admin becomes a deploy, which leaves a trace in the same place
+every other change to this service does, and a database somebody can write to
+still cannot hand them the dashboard.
+
+**Unset means the routes do not exist.** Not "exist but refuse" — `buildServer`
+never mounts them. That is the correct failure mode for a box that came up
+without its env file.
+
+There is a deliberate chicken-and-egg: admin is granted by account id, and the id
+is assigned on first sign-in. So sign in once, then:
+
+```bash
+npm run accounts
+```
+
+which prints ids newest-first, flagging who is already an admin and who is
+suspended. Put yours in `.env` and restart. It reads the database directly, so it
+has to be run on the box — admin is granted by somebody with a shell, never
+through the web.
+
+**Every rejection is a 404, not a 403.** Signed out, a guest, or an ordinary
+account all get the same "no such page" a typo gets, and the dashboard's own
+script is served from `server/admin/` rather than `public/` precisely so
+`express.static` cannot hand it out. A 403 would confirm that `/admin` exists and
+that an allowlist is the only thing in the way; a real admin never sees either.
+`test/admin.test.js` asserts the status code, not just the refusal.
+
+### The moderation queue
+
+Reporting a chat message used to write a `log.warn` line and nothing else, which
+told an operator that something happened but gave them nothing to act on. Reports
+now land in `chat_reports` as work items: the message, both display names, the
+room, and — where the sender had an account rather than a guest session — the id
+you would act on. The report path itself is unchanged and still resolves the text
+and the author from the room's own buffer, never from the reporter's request.
+
+A report is closed as **actioned** or **dismissed**, with an optional note.
+Closing one twice is an answer rather than an error (`changed: false`), so two
+admins clicking at once agree on the first finding instead of racing to overwrite
+it. Resolving a report never bans anybody and banning somebody never closes a
+report — "this message was fine" and "this player is fine" are different findings,
+and conflating them makes the queue lie.
+
+### Suspensions
+
+A ban is one row per account in `bans`, permanent or with an expiry, carrying the
+reason and who applied it. It is resolved **once**, onto the identity, by
+`accountIdentity` in `auth.js`, so there is one definition of "banned" and an
+expired ban stops applying everywhere at the same instant.
+
+Enforced at two places, which between them are everything a banned player could
+do in public:
+
+- **The Socket.IO handshake.** No socket means no queue, no room and no chat,
+  however the client is written. Refused there rather than disconnected
+  afterwards, because a socket torn down mid-emit may never deliver the reason —
+  and socket.io-client does not retry a middleware rejection, so nobody is left
+  in a reconnect loop against a door that will not open.
+- **The daily routes.** Every daily result publishes a display name next to a
+  score, which is the one public surface left otherwise.
+
+Banning someone who is already connected also closes their live sockets, telling
+them why first; the room treats it as an ordinary disconnect, which the game
+already knows how to survive. A suspended player can still read the site, and the
+lobby shows them the reason and when it lifts rather than a site that has
+silently stopped working.
+
+Two limits, stated plainly because the UI states them too. **Only accounts can be
+suspended** — a guest identity is a cookie, and the next guest session is a new
+one, so a report against a guest has nothing to act on beyond dismissing it. And
+**an account is not a person**: deleting the account drops the ban with it, and a
+fresh sign-in through the same provider is a new row with a new id.
+
+An admin cannot suspend themselves or anyone else on the allowlist. That reads as
+paranoia until you picture the alternative — the only operator locked out of
+their own game by their own dashboard.
+
 ## How scoring works
 
 Each guess earns the higher of two **accuracy** scores:
@@ -431,8 +526,14 @@ server/
   index.js          Bootstrap: listen, warm caches, retention sweep, signals
   app.js            Express + Socket.IO wiring, HTTP APIs, static hosting
   config.js         Env-driven configuration
-  db.js             SQLite schema + queries (users, ratings, matches)
+  db.js             SQLite schema + queries (users, ratings, matches, dailies,
+                    chat reports, bans)
   auth.js           Passport Google/Discord OAuth + guest identity
+  dailies.js        The three daily puzzles' routes and leaderboards
+  admin.js          /admin + /api/admin/* behind the ADMIN_USER_IDS allowlist
+  admin/            The dashboard page itself — outside public/ on purpose, so
+                    express.static cannot serve it to anyone
+  moderation.js     What a ban means at the edges: how long is left, what to say
   elo.js            Elo rating math + rank tiers
   modes.js          Clue modes: image | text | mixed
   tiers.js          Topic tiers: party | chaos
@@ -448,17 +549,25 @@ server/
   game/
     pool.js         Offline mystery source (local SQLite pool; tiered by topic)
     categories.js   Article categories: offline classifier + runtime helpers
+    daily.js        The UTC day, and the seeded pick every daily shares
+    wikidle.js      Daily: name the article from its opening words
+    tiles.js        Daily: the scrambled picture
+    match.js        Daily: nine pictures, nine titles
+    extract.js      Lead-text handling: blank the title, strip pronunciations
     wikipedia.js    Legacy live-API mystery fetching (kept as a fallback)
     scoring.js      Pure scoring engine
     topics.js       Curated seed titles for the live-API path (NOT categories)
 public/
   index.html        Landing page + lobby + leaderboard
   play.html         Game room
+  daily.html        Wikidle    tiles.html / match.html  the picture dailies
   privacy.html      Privacy policy (/privacy)
   terms.html        Terms of service (/terms)
-  js/               common.js (shared), home.js, play.js, theme.js, legal.js
-  css/styles.css
+  js/               common.js (shared), home.js, play.js, daily.js, tiles.js,
+                    match.js, theme.js, legal.js
+  css/styles.css    Every page, /admin included — a stylesheet is not a secret
 scripts/
+  list-accounts.js           Print account ids, for ADMIN_USER_IDS
   build-mysteries.js         Build the offline pool from Wikipedia dumps
   check-pool.js              Preflight a built pool before uploading it
   backup-restore-drill.js    Prove a crash-consistent snapshot is restorable

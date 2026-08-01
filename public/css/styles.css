@@ -677,3 +677,96 @@ a.match-title.solved {
   .daily-tab-name { font-size: 0.92rem; }
   .daily-tab-state { font-size: 0.7rem; }
 }
+
+/* ── Admin dashboard ──────────────────────────────────────────────────────────
+   Served at /admin from server/admin/, which is outside public/ and behind the
+   allowlist — but the stylesheet is not, because a stylesheet is not a secret
+   and shipping a second one would mean two copies of the site's theme.
+
+   Deliberately plain. This is a working view read while something is going
+   wrong, so it borrows the board and card rules already here and adds only what
+   a moderation queue genuinely needs. */
+.admin-badge {
+  font-family: var(--font-sans); font-size: 0.65rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  background: var(--score); color: #fff; border-radius: 2px; padding: 0.1rem 0.35rem;
+  vertical-align: middle;
+}
+/* Shown to a suspended player on the lobby. Marked with a rule down the side as
+   well as a colour, so it does not depend on seeing the accent. */
+.ban-notice {
+  border-left: 3px solid var(--score); margin-bottom: 1.2rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.ban-notice h2 { color: var(--score); }
+
+/* Wider than the game pages: this one is tables and a moderation queue, not
+   prose, and 1000px puts the reason column on top of the buttons. */
+.container.admin { max-width: 1200px; }
+.admin-tabs, .admin-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.2rem; }
+.admin-filters { margin-bottom: 0.8rem; }
+.admin-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.25rem; height: 1.25rem; margin-left: 0.3rem; padding: 0 0.25rem;
+  background: var(--score); color: #fff; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700;
+}
+
+/* The headline numbers. auto-fit rather than a fixed column count, so the row
+   reflows on a phone instead of scrolling sideways. */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.8rem; }
+.stat {
+  background: var(--bg2); border: 1px solid var(--border-light); border-radius: 2px;
+  padding: 0.8rem 0.9rem;
+}
+.stat-value { font-family: var(--font-serif); font-size: 1.9rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-label { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+.stat-note { color: var(--muted); font-size: 0.75rem; margin-top: 0.3rem; }
+
+/* One fact per line, label first. Wraps rather than truncating: a room's player
+   list is exactly the part you were reading it for. */
+.admin-rows { display: flex; flex-direction: column; }
+.admin-row {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.9rem;
+  padding: 0.4rem 0; border-bottom: 1px solid var(--border-light);
+}
+.admin-row:last-child { border-bottom: none; }
+.mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+
+/* A button that reads as a link — used to jump from a name to that player. */
+.linkish {
+  background: none; border: none; padding: 0; font-weight: 600;
+  color: var(--link); cursor: pointer;
+}
+.linkish:hover { background: none; border: none; color: var(--link-hover); text-decoration: underline; }
+
+button.danger { background: var(--score); border-color: var(--score); color: #fff; }
+button.danger:hover { background: var(--red); border-color: var(--red); color: #fff; }
+
+.tag {
+  display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; padding: 0.1rem 0.4rem; border-radius: 2px;
+  background: var(--bg3); color: var(--muted); vertical-align: middle;
+}
+.tag-ban { background: var(--score); color: #fff; }
+
+.report { margin-bottom: 0.8rem; }
+.report-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
+/* The reported message. Set apart and in the serif face so it reads as a
+   quotation of somebody else's words rather than as part of the interface —
+   which is what it is, and the distinction matters when you are deciding
+   whether to suspend a person over it. */
+.report-msg {
+  font-family: var(--font-serif); font-size: 1.1rem;
+  border-left: 3px solid var(--border); background: var(--bg);
+  padding: 0.6rem 0.9rem; margin: 0.7rem 0;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.report-msg.inline { font-size: 0.95rem; margin: 0; padding: 0.3rem 0.6rem; flex: 1 1 20rem; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.report-note { flex: 1 1 14rem; width: auto; }
+
+.ban-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ban-form input { flex: 1 1 16rem; width: auto; }
+.ban-form select { flex: 0 0 9rem; width: auto; }
+.player-detail h3 { font-size: 1rem; margin-bottom: 0.3rem; }

@@ -7,7 +7,7 @@ const { fetchMystery } = require("./game/pool");
 const { scoreGuess, creditLabel } = require("./game/scoring");
 const { updatePair, tierFor, START_RATING } = require("./elo");
 const { findPair, queueStatus } = require("./matchmaking");
-const { recordRankedMatch, getRating } = require("./db");
+const { recordRankedMatch, getRating, recordChatReport } = require("./db");
 const { normalizeMode, MODE_LABELS } = require("./modes");
 const { normalizeTier } = require("./tiers");
 const { ladderKey, RANKED_MODES, DEFAULT_RANKED_TIER } = require("./ladders");
@@ -590,9 +590,10 @@ class Room {
   // all taken from this room's own buffer — never from the request — so a report
   // cannot be used to fabricate a message or pin one on someone else.
   //
-  // This is the ONLY path by which a chat message is written anywhere durable
-  // (the application log, and from there CloudWatch for its retention window).
-  // public/privacy.html documents that; keep the two in step.
+  // This is the ONLY path by which a chat message is written anywhere durable:
+  // the `chat_reports` table, which is the queue /admin works through, and the
+  // application log, which is the trail. public/privacy.html documents both;
+  // keep the three in step.
   reportChat(reporter, messageId) {
     const msg = this.chatLog.find((m) => m.id === String(messageId || ""));
     // The buffer is short and in-memory, so an expired or invented id is simply
@@ -606,6 +607,32 @@ class Room {
     this.reported.add(key);
 
     const author = this.players.get(msg.fromId);
+    const authorUserId = author ? author.userId : null;
+
+    // The queue an operator actually works through. Wrapped, because a failed
+    // write must not cost the reporter their report: they still get the
+    // acknowledgement, the log line below still happens, and only the dashboard
+    // row is lost. The alternative — throwing out of a socket handler — ends the
+    // process and takes every live game with it.
+    try {
+      recordChatReport({
+        roomCode: this.code,
+        ranked: this.ranked,
+        isPrivate: this.isPrivate,
+        messageId: msg.id,
+        messageAt: msg.at,
+        messageText: msg.text,
+        authorIdentity: msg.fromId,
+        authorUserId,
+        authorName: msg.name,
+        reporterIdentity: reporter.id,
+        reporterUserId: reporter.userId || null,
+        reporterName: reporter.name,
+      });
+    } catch (err) {
+      log.error("chat_report_write_failed", { code: this.code, err });
+    }
+
     // warn, not info: this should surface wherever errors surface. userId is
     // included where there is one because an account is the only thing an
     // operator can actually act on — a guest id dies with the session.
@@ -617,7 +644,7 @@ class Room {
       reporterUserId: reporter.userId || null,
       reporterName: reporter.name,
       authorId: msg.fromId,
-      authorUserId: author ? author.userId : null,
+      authorUserId,
       authorName: msg.name,
       sentAt: msg.at,
       message: msg.text,

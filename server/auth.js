@@ -7,7 +7,7 @@ const DiscordStrategy = require("passport-discord").Strategy;
 const { customAlphabet } = require("nanoid");
 
 const config = require("./config");
-const { upsertOAuthUser, getUserById, getUserRatings, touchSeen } = require("./db");
+const { upsertOAuthUser, getUserById, getUserRatings, touchSeen, activeBan } = require("./db");
 const { tierFor } = require("./elo");
 const { LADDERS } = require("./ladders");
 
@@ -121,6 +121,13 @@ function accountIdentity(user) {
     // Default ON: the column defaults to 1, and a null from a row written before
     // the migration should also read as "chat visible".
     chatEnabled: user.chat_enabled !== 0,
+    // { reason, until, at } while a ban is in force, null otherwise. Resolved
+    // here rather than at each enforcement point so there is ONE definition of
+    // "this player is banned" — the socket handshake, the daily routes and the
+    // browser all read this same field, and an expired ban stops applying
+    // everywhere at once. One indexed lookup on a small table, on a path that
+    // already reads the user row and their ratings.
+    banned: activeBan(user.id),
     ratings,
   };
 }

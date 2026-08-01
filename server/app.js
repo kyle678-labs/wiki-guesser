@@ -26,6 +26,7 @@ const metrics = require("./metrics");
 const { db, getLeaderboard, getRecentMatches, deleteAccount, setChatEnabled } = require("./db");
 const { configurePassport, getSessionUser, router: authRouter } = require("./auth");
 const { router: dailyRouter, MOVE_PATHS } = require("./dailies");
+const { buildAdminRouter } = require("./admin");
 const { attachSockets } = require("./socket");
 const { tierFor } = require("./elo");
 const { MODES, MODE_LABELS, normalizeMode } = require("./modes");
@@ -99,9 +100,6 @@ function cspDirectives({ isProd = config.isProd, adsEnabled = config.adsense.ena
 function buildServer(overrides = {}) {
   const app = express();
   const server = http.createServer(app);
-  // Assigned at the end of this function; the /healthz closure below only reads
-  // it at request time, by which point it's set.
-  let manager = null;
 
   if (config.trustProxy) app.set("trust proxy", 1);
   app.disable("x-powered-by");
@@ -158,7 +156,7 @@ function buildServer(overrides = {}) {
     res.json({
       ok: true,
       uptime: Math.round(process.uptime()),
-      rooms: manager ? manager.rooms.size : 0,
+      rooms: manager.rooms.size,
       version: require("../package.json").version,
       // Exposed here so any monitor can scrape the leading indicator without
       // needing to parse logs or ship a custom CloudWatch metric.
@@ -186,6 +184,19 @@ function buildServer(overrides = {}) {
   configurePassport();
   app.use(passport.initialize());
   app.use(passport.session());
+
+  // ── Socket.IO ─────────────────────────────────────────────────────────────
+  // Built here rather than after the routes, because the admin dashboard reads
+  // live rooms and queues off the manager and has to be handed it at mount
+  // time. Position carries no other meaning: Socket.IO intercepts at the HTTP
+  // server, ahead of Express, so where it sits among the routes is irrelevant
+  // to how requests are dispatched.
+  const io = new Server(server, { cors: { origin: config.baseUrl, credentials: true } });
+  const manager = attachSockets(io, sessionMiddleware, {
+    ...(overrides.roomOptions || {}),
+    socketLimits: overrides.socketLimits,
+    maxSocketsPerIdentity: overrides.maxSocketsPerIdentity,
+  });
 
   // ── Rate limiting ───────────────────────────────────────────────────────────
   // /auth is the sharpest of the three: POST /auth/guest mints a session and
@@ -350,6 +361,19 @@ function buildServer(overrides = {}) {
   // rest of the API rather than being an unmetered way in.
   app.use(dailyRouter);
 
+  // ── Admin ─────────────────────────────────────────────────────────────────
+  // Registered before the static mount, which is what keeps /admin under the
+  // allowlist: express.static serves whatever it finds to whoever asks, so the
+  // dashboard's own HTML lives outside public/ and is served from here.
+  //
+  // Mounted only when there is somebody to let in. With ADMIN_USER_IDS unset —
+  // the default, and what a box with a dropped env file looks like — these
+  // routes do not exist at all, rather than existing and refusing everyone.
+  if (config.admin.enabled) {
+    app.use(buildAdminRouter({ manager, io }));
+    log.info("admin_enabled", { accounts: [...config.admin.userIds] });
+  }
+
   // ── Static site ───────────────────────────────────────────────────────────────
   const publicDir = path.join(__dirname, "..", "public");
   app.use(express.static(publicDir, { extensions: ["html"] }));
@@ -374,14 +398,6 @@ function buildServer(overrides = {}) {
     log.error("request_failed", { method: req.method, path: req.originalUrl.split("?")[0], err });
     if (res.headersSent) return next(err);
     res.status(err.status || 500).json({ error: "Something went wrong on our end." });
-  });
-
-  // ── Socket.IO ─────────────────────────────────────────────────────────────────
-  const io = new Server(server, { cors: { origin: config.baseUrl, credentials: true } });
-  manager = attachSockets(io, sessionMiddleware, {
-    ...(overrides.roomOptions || {}),
-    socketLimits: overrides.socketLimits,
-    maxSocketsPerIdentity: overrides.maxSocketsPerIdentity,
   });
 
   return { app, server, io, manager, sessionMiddleware };
