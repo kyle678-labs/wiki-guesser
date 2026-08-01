@@ -251,7 +251,7 @@ own leaderboard:
 
 | | Where | The puzzle | Scored on |
 |---|---|---|---|
-| **Wikidle** | `/daily` | Name the article from the first four words of its opening, its own name blanked out. Every wrong guess buys one more word. | guesses taken |
+| **Wikidle** | `/daily` | Name the article from the first six words of its opening, its own name blanked out. Every wrong guess buys one more word, and comes back marked letter by letter. | guesses taken |
 | **Wikitile** | `/tiles` | One article's picture, cut into sixteen tiles, shuffled and turned. Tap to turn a tile, drag to swap two. | solve time |
 | **Wikimatch** | `/match` | Nine pictures and nine titles, every caption under the wrong picture. Swap two captions at a time. | solve time |
 
@@ -297,6 +297,25 @@ always resolves to the same article, on every instance, forever — with no tabl
 of upcoming puzzles to maintain or get out of sync. The picture games take their
 scramble from a second stream off the same seed, so the board is identical for
 everyone too and par means the same thing on every leaderboard.
+
+**Wikidle borrows Wordle's two aids**, and it needs them more than Wordle does.
+A five-letter word with a grid tells you its length for free; an article title of
+unknown length, blanked out of a lead that may not have said what it is yet, told
+you nothing. So the answer's **shape** — how many words, how long each one, with
+its punctuation shown — is on screen from the first frame, and every guess comes
+back **marked letter by letter**: right letter in the right place, right letter
+elsewhere in the title, or not in it at all. Letters you place stay filled into
+the shape, so progress accumulates instead of scrolling up the guess list.
+
+Position is judged per word (the third letter of your second word against the
+third letter of the answer's second word), because that is the only alignment a
+player can reason about when the two have different word counts, and the
+remaining letters are drawn from a shared pool — so three E's in a guess cannot
+all come back "elsewhere" against an answer holding one. Both live in
+`game/wikidle.js` (`shapeOf`, `markGuess`, `revealedShape`) and are derived from
+the answer on every request rather than stored, so the session holds only what
+the player typed and there is no second copy of their progress to fall out of
+step with it.
 
 **The server holds everything worth lying about.** Wikidle keeps the answer and
 the words you have not earned; Wikimatch keeps which caption belongs to which
@@ -369,6 +388,17 @@ what to tune the windows from once real players are queuing.
 nobody shows up within a few seconds. It promises an instant game with no rating
 at stake, and guests — who have no rating to match on — play it. Ranked never
 bot-fills: a rating has to be won against a person.
+
+**"Queue again" re-enters the queue from the results screen.** A matchmaking
+room is one-and-done, and the thing most people want next is the same game
+again — so the game-over panel queues directly rather than sending them back to
+the lobby to re-pick two settings they already chose. The clue and tier are read
+off the finished room's own state, which for ranked is what keeps the next match
+on the ladder they were just rated on. The client leaves the finished room first
+(`room:leave`, then `queue:join`), so nobody is nominally present in one room
+while being matched into another; from there it is the ordinary queue, bot-fill
+and `match:found` navigation the lobby uses. Private rooms keep "Back to lobby"
+— they have a lobby to go back to.
 
 A matchmaking room's settings are **fixed by the queue its players joined** —
 its lobby shows neither an invite link nor the rules, and the server rejects any

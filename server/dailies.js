@@ -193,13 +193,23 @@ router.get("/api/daily", (req, res) => {
 
 // What the browser is allowed to know. Note `words`: sliced to what has been
 // earned, never the full list.
+//
+// `shape` and the per-guess `marks` are the Wordle half of the game, and both
+// are derived here rather than stored: the session keeps only what the player
+// typed, and everything shown about the answer is recomputed from it. A guess
+// list is therefore the whole record of a round — there is no second copy of
+// "which letters they have found" to drift out of step with it.
 function wikidleView(puzzle, st) {
   return {
     ...common(puzzle, st),
     words: puzzle.words.slice(0, st.revealed),
     revealed: st.revealed,
     maxWords: wikidle.MAX_WORDS,
-    guesses: st.guesses,
+    // Word count and word lengths, with correctly-placed letters filled in.
+    // Everything still unfound is a null slot, so this never runs ahead of what
+    // the guesses have earned.
+    shape: wikidle.revealedShape(puzzle.title, st.guesses),
+    guesses: st.guesses.map((g) => ({ ...g, marks: wikidle.markGuess(g.text, puzzle.title) })),
     won: st.won,
     // Only once the round is over, win or lose. Before that it is the answer.
     answer: st.done ? puzzle.title : null,

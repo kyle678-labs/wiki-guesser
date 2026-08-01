@@ -164,6 +164,72 @@ test("a guess has to name the article, not merely gesture at it", () => {
   assert.equal(wikidle.isCorrect("", "Polar Bear"), false);
 });
 
+// ── The Wordle aids ──────────────────────────────────────────────────────────
+// The shape and the letter marks are the two things that make an unbounded
+// answer playable. Both are derived from the answer, so both are places a
+// careless change could hand the whole thing over — the first test here is about
+// what the shape does NOT say.
+
+// One word per string, one character per letter: h(it), n(ear), m(iss), s(kip).
+// Compact enough that a whole expectation reads as the row a player would see.
+const marksOf = (guess, title) => wikidle.markGuess(guess, title).map((w) => w.map((c) => c.mark[0]).join(""));
+
+test("the shape gives the answer's size and not one letter of it", () => {
+  const shape = wikidle.shapeOf("Polar Bear");
+  assert.deepEqual(shape, [
+    [null, null, null, null, null],
+    [null, null, null, null],
+  ], "two words of five and four, and nothing else");
+
+  // Punctuation is structure rather than answer: it was never hidden, so it is
+  // shown outright and a player reads the title's real shape.
+  assert.deepEqual(wikidle.shapeOf("Jack-in-the-box"), [
+    [null, null, null, null, "-", null, null, "-", null, null, null, "-", null, null, null],
+  ]);
+});
+
+test("a guess comes back marked letter by letter", () => {
+  assert.deepEqual(marksOf("Polar Bear", "Polar Bear"), ["hhhhh", "hhhh"], "the solve is all hits");
+  // S is not in the answer at all; the rest of "olar" sits where it belongs.
+  assert.deepEqual(marksOf("Solar Beam", "Polar Bear"), ["mhhhh", "hhhm"]);
+  // One word against two: nothing can be in position, but every letter is in
+  // the answer somewhere, which is exactly the nudge the puzzle owed a player.
+  assert.deepEqual(marksOf("bear", "Polar Bear"), ["nnnn"]);
+  assert.deepEqual(marksOf("Zurich", "Zürich"), ["hhhhhh"], "an accent the player can't type is still a hit");
+});
+
+test("marks never report more of a letter than the answer holds", () => {
+  // "Bee" has two E's. Both are placed, so the two spare ones in the guess are
+  // misses — a pool shared between the passes is the only thing that gets this
+  // right, and getting it wrong would over-promise on every repeated letter.
+  assert.deepEqual(marksOf("eeee", "Bee"), ["mhhm"]);
+  // "Banana" holds three A's, at positions 1, 3 and 5. Seven A's asks for more
+  // than that: three come back placed and the other four come back as nothing,
+  // rather than the whole row lighting up.
+  assert.deepEqual(marksOf("aaaaaaa", "Banana"), ["mhmhmhm"]);
+  assert.deepEqual(marksOf("aaa", "Banana"), ["nhn"], "one placed, two accounted for elsewhere");
+});
+
+test("punctuation in a guess is shown, not judged", () => {
+  const marks = wikidle.markGuess("jack-o", "Jack Rabbit");
+  assert.deepEqual(marks[0].map((c) => c.mark), ["hit", "hit", "hit", "hit", "skip", "miss"]);
+});
+
+test("correctly placed letters accumulate across guesses", () => {
+  // Neither guess names it; between them they place every letter of the first
+  // word and the B of the second, and none of what they missed leaks.
+  const shape = wikidle.revealedShape("Polar Bear", [{ text: "Polar Cub" }, { text: "solar Bump" }]);
+  assert.deepEqual(shape, [
+    ["P", "o", "l", "a", "r"],
+    ["B", null, null, null],
+  ]);
+  assert.deepEqual(
+    wikidle.revealedShape("Polar Bear", []),
+    wikidle.shapeOf("Polar Bear"),
+    "no guesses, nothing revealed"
+  );
+});
+
 // ── The round, over HTTP ─────────────────────────────────────────────────────
 
 let srv;
@@ -225,6 +291,33 @@ test("a finished player cannot keep guessing, and gets one board entry", async (
   const board = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle/leaderboard", cookie)).body);
   const mine = board.leaderboard.filter((r) => r.name === board.me.name);
   assert.equal(mine.length, 1, "one entry per player per day");
+});
+
+test("the round ships the answer's shape, and fills it in as letters are placed", async () => {
+  const { cookie } = await helpers.guestSession(srv.port, "Speller");
+  const answer = answerToday();
+
+  let st = JSON.parse((await helpers.get(srv.port, "/api/daily/wikidle", cookie)).body);
+  const words = answer.split(/\s+/);
+  assert.deepEqual(st.shape.map((w) => w.length), words.map((w) => w.length), "word count and lengths");
+  assert.ok(st.shape.every((w) => w.every((c) => c === null)), "before a guess, no letter is given away");
+
+  // First letter of the answer, then padding out of a letter the answer does not
+  // contain — so exactly one slot can be earned and the assertion below is
+  // about the mechanism rather than about which article today landed on.
+  const filler = "qzxjkvw".split("").find((c) => !answer.toLowerCase().includes(c));
+  assert.ok(filler, `no unused letter available for "${answer}"`);
+  const probe = answer[0] + filler.repeat(6);
+
+  st = JSON.parse((await helpers.postJson(srv.port, "/api/daily/wikidle/guess", { text: probe }, cookie)).body);
+  assert.equal(st.guesses[0].correct, false, "the probe must not accidentally name it");
+  assert.equal(st.guesses[0].marks[0][0].mark, "hit");
+  assert.ok(st.guesses[0].marks[0].slice(1).every((c) => c.mark === "miss"), "the filler is in nothing");
+
+  assert.equal(st.shape[0][0], answer[0], "a placed letter stays on screen");
+  const revealed = st.shape.flat().filter((c) => c !== null);
+  assert.equal(revealed.length, 1, "and only the one that was earned");
+  assert.equal(st.answer, null, "the rest of it is still the answer");
 });
 
 test("an empty guess is rejected without costing a word", async () => {

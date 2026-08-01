@@ -35,6 +35,10 @@
   // ── Socket events ───────────────────────────────────────────────────────────
   WG.on("room:error", ({ message }) => {
     WG.toast(message);
+    // A refused queue:join arrives here too (a ranked ladder this account can't
+    // enter, or the rate limiter). Put the button back rather than leaving the
+    // player watching a search that is not happening.
+    if (requeueing) setRequeueUi(false);
     if (/no room|in progress|full/i.test(message)) setTimeout(() => (window.location = "/"), 1800);
   });
 
@@ -160,6 +164,7 @@
 
     const actions = $("over-actions");
     actions.innerHTML = "";
+    $("over-queue").textContent = "";
     if (state && state.isPrivate) {
       const again = document.createElement("button");
       again.className = "primary";
@@ -167,14 +172,97 @@
       again.onclick = () => { hide("over-panel"); render(); };
       actions.appendChild(again);
     } else {
+      // A matchmaking room is one-and-done, and the thing almost everybody wants
+      // next is the same game again. Queuing from here rather than sending them
+      // back to the lobby to re-pick the two settings they already chose saves
+      // the round trip and, on ranked, keeps them in the queue they were rated
+      // on. Same queue, same ladder — see requeue().
+      const again = document.createElement("button");
+      again.className = "primary";
+      again.id = "btn-requeue";
+      again.textContent = "Queue again";
+      again.onclick = requeue;
+      actions.appendChild(again);
+
       const home = document.createElement("button");
-      home.className = "primary";
-      home.textContent = "New match";
+      home.className = "ghost";
+      home.id = "btn-home";
+      home.textContent = "Back to menu";
       home.onclick = () => (window.location = "/");
       actions.appendChild(home);
     }
     show("over-panel");
   });
+
+  // ── Queue again ─────────────────────────────────────────────────────────────
+  // Re-enter the queue this room came from, without going via the lobby. The
+  // settings are read off the room's own state rather than remembered from the
+  // URL or from whatever was picked before the match — for ranked they decide
+  // the ladder, so guessing at them is not an option.
+  //
+  // Leaving first is deliberate: the finished room is disposed of a minute after
+  // game over either way, and staying in it would leave the player nominally
+  // present in one room while being matched into another.
+  let requeueing = false;
+
+  function requeue() {
+    if (!state || state.isPrivate || requeueing) return;
+    const clue = state.settings.clue;
+    const tier = state.settings.mode;
+    requeueing = true;
+    WG.emit("room:leave");
+    WG.emit("queue:join", { ranked: state.ranked, clue, tier });
+    setRequeueUi(
+      true,
+      `Finding another ${state.ranked ? "ranked" : "casual"} ${WG.tierLabel(tier)} · ${WG.modeLabel(clue)} match`
+    );
+  }
+
+  function setRequeueUi(on, label) {
+    requeueing = on;
+    const btn = $("btn-requeue");
+    if (btn) {
+      btn.disabled = on;
+      btn.textContent = on ? "Searching…" : "Queue again";
+    }
+    const line = $("over-queue");
+    if (!on) { line.textContent = ""; return; }
+    line.textContent = `${label}… waiting for an opponent.`;
+    const cancel = document.createElement("button");
+    cancel.className = "ghost small";
+    cancel.style.marginLeft = "0.5rem";
+    cancel.textContent = "Cancel";
+    cancel.onclick = () => { WG.emit("queue:leave"); setRequeueUi(false); };
+    line.appendChild(cancel);
+  }
+
+  // Ranked widens its search the longer you wait, so say so — the same line the
+  // lobby shows, for the same reason: an unexplained wait reads as broken.
+  function renderQueueStatus(s) {
+    if (!requeueing || !s || s.window == null) return;
+    // Only the leading text node is rewritten — replacing the whole line would
+    // take the Cancel button with it every tick.
+    const line = $("over-queue").firstChild;
+    if (!line) return;
+    const secs = Math.round((s.waitedMs || 0) / 1000);
+    const lo = Math.max(0, s.rating - s.window);
+    const hi = s.rating + s.window;
+    line.nodeValue =
+      `Searching ${lo}–${hi} (your rating ${s.rating}${s.provisional ? ", provisional" : ""})` +
+      ` · ${secs}s · the range widens as you wait. `;
+  }
+  WG.on("queue:waiting", renderQueueStatus);
+  WG.on("queue:status", renderQueueStatus);
+
+  WG.on("queue:timeout", ({ waitedMs }) => {
+    setRequeueUi(false);
+    const mins = Math.max(1, Math.round((waitedMs || 0) / 60000));
+    WG.toast(`No ranked opponent found after ${mins} min — try casual, or a private room with friends.`);
+  });
+
+  // The queue found one. Same handling as the lobby's: the room exists and this
+  // identity is already in it, so navigating is what puts the page in it.
+  WG.on("match:found", ({ code }) => { window.location = `/room/${code}`; });
 
   WG.on("chat:msg", ({ id, fromId, name, text }) => {
     const log = $("chat-log");

@@ -22,6 +22,13 @@
   --green: #14866d;
   --red: #d33;
   --score: #b32424;
+  /* "Right letter, wrong place" on the daily. Wordle's yellow is unreadable
+     under white text, so this is pulled toward amber until it carries one. */
+  --near: #a06a00;
+  /* What goes ON a filled daily tile. The accents are dark enough to carry
+     white here and light enough to need dark ink in the dark theme, so the
+     choice belongs to the theme rather than to the tile rule. */
+  --tile-ink: #ffffff;
   --shadow: rgba(0, 0, 0, 0.08);
 }
 
@@ -41,6 +48,8 @@
   --green: #4ab38f;
   --red: #ff6d6d;
   --score: #ff8a8a;
+  --near: #c8912f;
+  --tile-ink: #101418;
   --shadow: rgba(0, 0, 0, 0.4);
 }
 
@@ -518,6 +527,49 @@ a.btn-link:hover { background: var(--progressive-hover); border-color: var(--pro
 .daily-guess.hit { border-color: var(--green); color: var(--green); font-weight: 600; }
 .daily-mark { font-variant-numeric: tabular-nums; }
 
+/* ── Wikidle: the answer's shape, and the letter marks ────────────────────────
+   Two rows of the same boxes: the outline of the answer above the input, and
+   each guess marked underneath it. They share their metrics deliberately — a
+   letter you place should land in a box the same size and in the same column as
+   the one it fills in, or the two stop reading as the same puzzle.
+
+   Colour is never the only signal: a placed letter also appears in the outline
+   above, which is what a player reading it in greyscale is actually following. */
+.daily-pattern:not(:empty) { margin: -0.3rem 0 1rem; }
+.wd-shape, .wd-guess { display: flex; flex-wrap: wrap; gap: 0.55rem; }
+.wd-word { display: flex; gap: 0.15rem; }
+.wd-slot, .wd-tile {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.45rem; height: 1.75rem; padding: 0 0.15rem;
+  font-family: var(--font-sans); font-weight: 700; font-size: 0.95rem;
+  text-transform: uppercase; line-height: 1;
+  border: 1px solid var(--border-light); border-radius: 2px; background: var(--bg2);
+}
+/* An empty slot is a gap to fill, so it is drawn as a rule along the bottom
+   rather than as a box with nothing in it. */
+.wd-slot { border-bottom: 2px solid var(--border); }
+.wd-slot.known { background: var(--green); border-color: var(--green); color: var(--tile-ink); }
+/* Punctuation the title was always going to show — a hyphen or an apostrophe.
+   Not something anyone earned, so it is not dressed up as a find. */
+.wd-slot.fixed {
+  background: transparent; border-color: transparent; color: var(--muted);
+  min-width: 0.7rem; font-weight: 400;
+}
+
+.wd-tile.hit { background: var(--green); border-color: var(--green); color: var(--tile-ink); }
+.wd-tile.near { background: var(--near); border-color: var(--near); color: var(--tile-ink); }
+.wd-tile.miss { background: var(--bg3); border-color: var(--border-light); color: var(--muted); }
+/* Punctuation inside a guess: shown, never marked. */
+.wd-tile.skip {
+  background: transparent; border-color: transparent; color: var(--muted);
+  min-width: 0.7rem; font-weight: 400;
+}
+
+/* The legend in "How it works". Inline, so the swatch sits in the sentence it
+   is explaining rather than in a key somewhere else. */
+.wd-key { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+.wd-key .wd-tile { min-width: 1.2rem; height: 1.35rem; font-size: 0.8rem; }
+
 .daily-win { color: var(--green); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
 .daily-lose { color: var(--score); font-family: var(--font-serif); font-weight: 400; margin-bottom: 0.3rem; }
 
@@ -529,6 +581,10 @@ a.btn-link:hover { background: var(--progressive-hover); border-color: var(--pro
 
 @media (max-width: 600px) {
   .daily-clue { font-size: 1.15rem; }
+  /* A long title is a lot of boxes. Shrink them rather than let a word wrap
+     mid-way through, which would misreport how long that word is. */
+  .wd-slot, .wd-tile { min-width: 1.15rem; height: 1.5rem; font-size: 0.8rem; }
+  .wd-shape, .wd-guess { gap: 0.4rem; }
 }
 
 /* ── The daily strip ──────────────────────────────────────────────────────────

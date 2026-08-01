@@ -106,6 +106,54 @@ test("a finished matchmaking room stays done — there is no lobby to return to"
   sb.close();
 });
 
+// "Queue again" on the results screen is exactly this pair of events, sent on
+// the socket the finished game was played on (see requeue() in public/js/play.js).
+// The interesting part is that it happens from INSIDE a room: nothing else in
+// the game queues without first being on the lobby page, so this is the one path
+// where a stale `locate` entry or a room that refuses to let go would strand a
+// player on a dead results screen.
+test("queueing again from a finished match puts you in a new room", async () => {
+  const a = await guestSession(ctx.port, "Kip");
+  const b = await guestSession(ctx.port, "Lux");
+  const sa = connect(ctx.port, a.cookie);
+  const sb = connect(ctx.port, b.cookie);
+  await Promise.all([once(sa, "me"), once(sb, "me")]);
+
+  const found = Promise.all([once(sa, "match:found", 15000), once(sb, "match:found", 15000)]);
+  sa.emit("queue:join", { ranked: false, clue: "image", tier: "party" });
+  sb.emit("queue:join", { ranked: false, clue: "image", tier: "party" });
+  const [first] = await found;
+
+  ctx.manager.rooms.get(first.code).settings.rounds = 1;
+  await Promise.all([once(sa, "game:over", 20000), once(sb, "game:over", 20000)]);
+
+  // Both press it, which is the ordinary case: the two people who just played
+  // are the two most likely to want another.
+  const again = Promise.all([once(sa, "match:found", 15000), once(sb, "match:found", 15000)]);
+  for (const s of [sa, sb]) {
+    s.emit("room:leave");
+    // The settings come off the finished room's own state, so the second match
+    // is the same game on the same ladder as the first.
+    s.emit("queue:join", { ranked: false, clue: "image", tier: "party" });
+  }
+  const [second] = await again;
+
+  assert.notEqual(second.code, first.code, "a new room, not the one that just ended");
+  assert.equal(second.clue, "image");
+  assert.equal(second.tier, "party");
+  assert.equal(ctx.manager.locate.get(a.user.id), second.code, "and the player is in it");
+  assert.equal(ctx.manager.locate.get(b.user.id), second.code);
+  // The finished room let go rather than leaving them nominally in two places.
+  assert.equal(ctx.manager.rooms.has(first.code), false);
+
+  // It plays: a requeue that lands in a room which never starts is no better
+  // than being sent back to the menu.
+  await Promise.all([once(sa, "round:start", 15000), once(sb, "round:start", 15000)]);
+
+  sa.close();
+  sb.close();
+});
+
 test("creating a room takes you out of the matchmaking queue", async () => {
   const c = await guestSession(ctx.port, "Eli");
   // Two sockets on one identity: one queues, the other creates a room. Without

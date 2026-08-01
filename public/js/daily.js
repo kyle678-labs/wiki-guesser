@@ -26,6 +26,11 @@
 
   let state = null;
 
+  // A revealed slot is either a letter the player placed or a piece of the
+  // title's punctuation, which was never hidden. Only the first gets the
+  // "you found this" treatment. Kept in step with HIDDEN in game/wikidle.js.
+  const LETTER = /[\p{L}\p{N}]/u;
+
   // ── Rendering ───────────────────────────────────────────────────────────────
 
   function renderClue() {
@@ -37,6 +42,56 @@
     $("daily-clue").innerHTML = html + (state.done ? "" : ' <span class="daily-more">…</span>');
   }
 
+  // The answer's shape — a box per character, with the letters you have placed
+  // already filled in. A `null` slot is one nobody has earned yet; anything else
+  // is a character the server has decided you may see, so it is drawn as-is.
+  function renderShape() {
+    const el = $("daily-pattern");
+    // Once it is over the answer itself is on screen, and a half-filled outline
+    // of a word you can already read is just noise.
+    if (state.done || !state.shape || !state.shape.length) { el.innerHTML = ""; return; }
+
+    const boxes = state.shape
+      .map(
+        (word) =>
+          `<span class="wd-word">` +
+          word
+            .map((c) =>
+              c == null
+                ? `<span class="wd-slot"></span>`
+                : `<span class="wd-slot ${LETTER.test(c) ? "known" : "fixed"}">${WG.escapeHtml(c)}</span>`
+            )
+            .join("") +
+          `</span>`
+      )
+      .join("");
+
+    const words = state.shape.length;
+    const chars = state.shape.reduce((n, w) => n + w.length, 0);
+    el.innerHTML =
+      `<div class="wd-shape">${boxes}</div>` +
+      `<p class="hint">The answer: ${words} word${words === 1 ? "" : "s"}, ${chars} character${chars === 1 ? "" : "s"}.</p>`;
+  }
+
+  // A guess, marked letter by letter. `marks` is the server's reading of it, so
+  // an old response that predates them (or a guess of pure punctuation) falls
+  // back to the plain text rather than rendering an empty row.
+  function guessTiles(g) {
+    if (!g.marks || !g.marks.length) return `<span>${WG.escapeHtml(g.text)}</span>`;
+    return (
+      `<span class="wd-guess">` +
+      g.marks
+        .map(
+          (word) =>
+            `<span class="wd-word">` +
+            word.map((c) => `<span class="wd-tile ${c.mark}">${WG.escapeHtml(c.ch)}</span>`).join("") +
+            `</span>`
+        )
+        .join("") +
+      `</span>`
+    );
+  }
+
   function renderGuesses() {
     if (!state.guesses.length) { $("daily-guesses").innerHTML = ""; return; }
     // Newest first: the list only grows, and the last thing you tried is the
@@ -45,7 +100,7 @@
       .reverse()
       .map(
         (g) => `<div class="daily-guess ${g.correct ? "hit" : "miss"}">
-          <span>${WG.escapeHtml(g.text)}</span>
+          ${guessTiles(g)}
           <span class="daily-mark">${g.correct ? "✓" : "✕"}</span>
         </div>`
       )
@@ -93,6 +148,7 @@
 
   function render() {
     renderClue();
+    renderShape();
     renderGuesses();
     renderStatus();
     renderResult();

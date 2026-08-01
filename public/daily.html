@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Wikidle — the daily Wikipedia guessing puzzle</title>
-<meta name="description" content="One Wikipedia article a day. Start with four words and name it — every wrong guess reveals one more. New puzzle at midnight UTC." />
+<meta name="description" content="One Wikipedia article a day. Start with six words and name it — every wrong guess reveals one more word and marks your letters. New puzzle at midnight UTC." />
 <script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/styles.css" />
 </head>
@@ -20,7 +20,7 @@
   <div class="container">
     <header class="hero">
       <h1>Wikidle</h1>
-      <p class="tagline">One article a day. You get four words — name it. Every wrong guess buys you one more word.</p>
+      <p class="tagline">One article a day. You get six words and the answer's shape — name it. Every wrong guess buys you one more word and marks your letters.</p>
       <p class="hint" id="daily-reset">Loading today's puzzle…</p>
     </header>
 
@@ -31,6 +31,11 @@
 
     <div class="card" id="daily-card">
       <div id="daily-clue" class="clue-text daily-clue">Loading…</div>
+
+      <!-- The answer's shape: one box per character, filled in as your guesses
+           place letters. Rendered by daily.js from what the server sends, which
+           is never more than the guesses have earned. -->
+      <div id="daily-pattern" class="daily-pattern"></div>
 
       <div class="share-row" id="daily-guess-row">
         <input type="text" id="daily-guess" maxlength="80" placeholder="Which article is this?" autocomplete="off" />
@@ -55,7 +60,13 @@
     <div class="card">
       <ol style="margin-left:1.2rem; display:flex; flex-direction:column; gap:0.4rem;">
         <li>Everyone gets the same article each day. It changes at midnight UTC.</li>
-        <li>You start with the first four words of its opening — with the article's own name blanked out.</li>
+        <li>You start with the first six words of its opening — with the article's own name blanked out.</li>
+        <li>The boxes above the input are the answer's shape: how many words it has, and how long each one is.</li>
+        <li>Every guess is marked letter by letter.
+          <span class="wd-key"><span class="wd-tile hit">A</span> right letter, right place</span> ·
+          <span class="wd-key"><span class="wd-tile near">B</span> in the answer, elsewhere</span> ·
+          <span class="wd-key"><span class="wd-tile miss">C</span> not in it</span>.
+          Letters you place correctly stay filled in above.</li>
         <li>Guess wrong and one more word appears. Your score is how many guesses it took, so lower is better.</li>
         <li>Near-misses count: a typo or a missing accent will still be accepted.</li>
         <li>Nothing is timed — take as long as you like. Equal scores are ranked by who got there first.</li>
