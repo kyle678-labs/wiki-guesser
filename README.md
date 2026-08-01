@@ -584,7 +584,43 @@ test/                        Node test runner suite (npm test)
 EC2 + Elastic IP, Caddy terminating TLS with an auto-renewed Let's Encrypt
 certificate, a separate EBS data volume with daily snapshots, secrets in SSM,
 JSON logs and alarms in CloudWatch, and shell access via Session Manager rather
-than SSH. Roughly $34–37/month.
+than SSH.
+
+**Roughly $21/month** at the defaults, in us-east-1:
+
+| | $/month |
+|---|---|
+| `t4g.small` (2 vCPU / 2 GiB, Graviton) | 12.26 |
+| 2 × 20 GiB gp3 (root + data) | 3.20 |
+| Public IPv4 on the Elastic IP | 3.65 |
+| 12 CloudWatch alarms | 1.20 |
+| Route 53 health check, log ingestion, custom metrics | ~2.50 |
+| Daily snapshots, S3 pool storage | ~0.20 |
+
+Two things about that number, both learned the hard way.
+
+**An idle box costs exactly what a busy one does.** The whole design — SQLite on
+local disk, rooms in memory, long-lived WebSockets, a pool that wants to stay
+page-cached — assumes a machine that is always on. There is no scale-to-zero to
+reach for without building a different application, so the only real lever is
+right-sizing, and `instance_type` is where nearly all of it lives. This ran on
+`c7i-flex.large` ($61.90) until 2026-08, which was 5× the instance this needs.
+
+**On an AWS Free plan you cannot launch whatever you like.** `RunInstances`
+refuses any type that is not free-tier eligible, and the list does not include
+`t4g.medium` — the obvious 4 GiB Graviton choice. Because Terraform replaces an
+instance by destroying it first, discovering that costs an outage. Check before
+you change `instance_type`, and do not trust `--dry-run`, which validates IAM
+only and will happily approve a type the account cannot launch:
+
+```bash
+aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true \
+  --query 'InstanceTypes[].InstanceType' --output text
+```
+
+On a paid plan the catalogue opens up; `t4g.medium` is $24.53 and doubles the
+memory headroom. A one-year Compute Savings Plan takes either figure down by
+roughly a third.
 
 ```bash
 cd infra

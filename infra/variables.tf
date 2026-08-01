@@ -21,19 +21,59 @@ variable "acme_email" {
 }
 
 variable "instance_type" {
-  description = "2 vCPU / 4 GiB. Node is single-threaded and the SQLite reads are synchronous, so extra vCPUs buy almost nothing - the 4 GiB is the point: it keeps the ~964 MB pool page-cached alongside the Node heap with room to spare, which is what actually governs latency. Do NOT drop to a 1 GiB type (t3.micro, t4g.micro) to save money: the pool alone is larger than that, so every mystery pick becomes a disk read and the event-loop-lag alarm in monitoring.tf becomes the steady state. MUST be kept in step with ami_ssm_parameter, which is architecture-specific."
+  description = <<-EOT
+    2 vCPU / 2 GiB on Graviton. Node is single-threaded and the SQLite reads are
+    synchronous, so extra vCPUs buy nothing; memory is the only dimension that
+    matters, because it decides how much of the pool stays page-cached. MUST be
+    kept in step with ami_ssm_parameter, which is architecture-specific.
+
+    2 GiB IS ENOUGH, and this was measured on the running 4 GiB box rather than
+    estimated. Anon memory in use is ~357 MiB total: node 117, the CloudWatch
+    agent 138 (yes, more than the app), caddy 56, the SSM agents ~48. The pool
+    file is 919 MiB. On a 2 GiB machine that leaves ~1.6 GiB of page cache for a
+    919 MiB pool - it fits whole, with ~670 MiB spare, and still fits if node
+    triples under load. An earlier version of this note claimed the pool "would
+    not fit" in 2 GiB; it was wrong by a factor of two.
+
+    What the cgroup shows at boot (~962 MiB) is warmPartyIndex scanning the whole
+    table - there is no index on `popularity` - not a standing requirement. The
+    party tier that ranked and the dailies actually draw from is held in the JS
+    heap, inside node's 117 MiB. Only chaos-tier casual rounds read randomly into
+    the 919 MiB file, one article at a time, against gp3 at 3000 IOPS.
+
+    CONSTRAINED BY THE ACCOUNT'S PLAN, which is not obvious and cost an outage to
+    learn. On an AWS Free plan, RunInstances refuses ANY type that is not
+    free-tier eligible, and the list is short and arbitrary-looking:
+
+      c7i-flex.large (4 GiB), m7i-flex.large (8 GiB),
+      t3.small / t4g.small (2 GiB), t3.micro / t4g.micro (1 GiB)
+
+    Note what is absent: t4g.medium, the obvious 4 GiB Graviton choice. Switching
+    to it on a free plan fails at RunInstances AFTER Terraform has destroyed the
+    running instance, because aws_instance replacement is destroy-then-create.
+    ALWAYS check the list before changing this:
+
+      aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true
+
+    `run-instances --dry-run` does NOT catch it - it validates IAM only and
+    cheerfully reports that a t4g.medium "would have succeeded". The list above is
+    the only reliable pre-flight.
+
+    On a PAID plan the whole catalogue opens up and t4g.medium ($24.53/mo, 4 GiB)
+    is the better answer - double the headroom for $12 more.
+  EOT
   type        = string
-  default     = "c7i-flex.large"
+  default     = "t4g.small"
 }
 
 variable "ami_ssm_parameter" {
-  description = "SSM public parameter resolving to the latest Amazon Linux 2023 AMI. MUST match the instance architecture: -x86_64 for c7i-flex/m7i-flex/t3, -arm64 for t4g. A mismatch fails at RunInstances with an unhelpful error about the image."
+  description = "SSM public parameter resolving to the latest Amazon Linux 2023 AMI. MUST match the instance architecture: -arm64 for t4g/m7g, -x86_64 for c7i-flex/m7i-flex/t3. A mismatch fails at RunInstances with an unhelpful error about the image. Nothing in user_data.sh.tftpl is architecture-bound - Caddy is selected by `uname -m`, Node comes from the distro repo, and better-sqlite3 ships a prebuilt linux-arm64 binary with a gcc fallback already installed - so this pair is the only thing that decides the architecture."
   type        = string
-  default     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+  default     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 }
 
 variable "cpu_credits" {
-  description = "Burstable CPU mode. 'unlimited' because exhausting credits throttles the instance to ~20% baseline, and for a real-time game that is not degradation but an outage — round timers slip and games desync. The surcharge only applies above baseline; watch CPUCreditBalance and move to a non-burstable type (m7g.medium) if it is sustained."
+  description = "Burstable CPU mode. 'unlimited' because exhausting credits throttles the instance to ~20% baseline, and for a real-time game that is not degradation but an outage — round timers slip and games desync. The surcharge only applies above baseline; watch CPUCreditBalance and move to a non-burstable type (m7g.medium) if it is sustained. NOTE: this setting is only emitted for T-family types (see the dynamic block in main.tf), so it was inert while instance_type was c7i-flex.large and became live again with the move to t4g.medium. There is no alarm on CPUCreditBalance — an idle-to-moderate game server sits far below the 20%/vCPU baseline, so surplus charges would mean real sustained load, which the event-loop-lag alarm would surface first anyway."
   type        = string
   default     = "unlimited"
 
